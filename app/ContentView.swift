@@ -24,7 +24,7 @@ struct ContentView: View {
 
                 AssistantView()
                     .tag(AppTab.assistant)
-                    .tabItem { Label("Ask AI", systemImage: "bubble.left.and.bubble.right") }
+                    .tabItem { Label("Assistant", systemImage: "bubble.left.and.bubble.right") }
 
                 CameraView()
                     .tag(AppTab.camera)
@@ -43,49 +43,6 @@ struct ContentView: View {
                     .tabItem { Label("Profile", systemImage: "person.crop.circle") }
             }
             .background(Color.slate50)
-
-            /*
-            // Floating center camera action to improve...
-            VStack {
-                Spacer()
-
-                Button {
-                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                        selected = .camera
-                        showCameraPulse.toggle()
-                    }
-                } label: {
-                    ZStack {
-                        Circle()
-                            .fill(selected == .camera ? Color.white : Color.blue600)
-                            .frame(width: 64, height: 64)
-                            .shadow(color: Color.black.opacity(0.15),
-                                    radius: 14, x: 0, y: 10)
-                            .overlay(
-                                Circle()
-                                    .stroke(
-                                        selected == .camera
-                                            ? Color.blue500
-                                            : Color.clear,
-                                        lineWidth: 2
-                                    )
-                            )
-
-                        Image(systemName: "camera.viewfinder")
-                            .font(.system(size: 24, weight: .medium))
-                            .foregroundStyle(
-                                selected == .camera
-                                    ? Color.blue600
-                                    : Color.white
-                            )
-                    }
-                }
-                .padding(.bottom, 20) // sits nicely above tab bar
-            }
-            .frame(maxWidth: .infinity)
-            .ignoresSafeArea(edges: .bottom)
-             */
-
         }
     }
 }
