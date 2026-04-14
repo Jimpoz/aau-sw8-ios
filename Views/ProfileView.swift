@@ -8,6 +8,7 @@
 import SwiftUI
 
 struct ProfileView: View {
+    @EnvironmentObject private var themeSettings: ThemeSettings
     @State private var displayName: String = "John Doe"
     @State private var goldMember: Bool = true
     @State private var avoidStairs: Bool = true
@@ -59,6 +60,33 @@ struct ProfileView: View {
                         ToggleRow(title: "Avoid Stairs", isOn: $avoidStairs)
                         ToggleRow(title: "Voice Guidance", isOn: $voiceGuidance)
                         ToggleRow(title: "Use Elevators Only", isOn: $elevatorsOnly)
+                    }
+                    .padding(16)
+                }
+                .background(.white, in: RoundedRectangle(cornerRadius: 20))
+                .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.slate100))
+
+                // Theme
+                VStack(spacing: 0) {
+                    HStack {
+                        Text("Appearance")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(Color.slate700)
+                        Spacer()
+                    }
+                    .padding(12)
+                    .background(Color.slate50)
+                    .overlay(Rectangle().frame(height: 1).foregroundStyle(Color.slate100), alignment: .bottom)
+
+                    VStack(spacing: 16) {
+                        HStack {
+                            Text("Dark Mode")
+                                .font(.system(size: 14))
+                                .foregroundStyle(Color.slate600)
+                            Spacer()
+                            Toggle("", isOn: $themeSettings.isDarkMode)
+                                .labelsHidden()
+                        }
                     }
                     .padding(16)
                 }

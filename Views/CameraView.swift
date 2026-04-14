@@ -16,53 +16,76 @@ struct CameraView: View {
     }
     
     var body: some View {
-        ZStack {
-            if isPreview {
-                LinearGradient(colors: [Color(white: 0.1), .black], startPoint: .top, endPoint: .bottom)
-                    .ignoresSafeArea()
-            } else {
-                CameraPreview(session: vm.session)
-                    .ignoresSafeArea()
-            }
-
-            // Top direction card
-            VStack {
-                DirectionCard()
-                    .padding(.top, 16)
-                    .padding(.horizontal, 16)
-                Spacer()
-                HStack {
-                    // To add the actual level of accuracy based off the data received by the device
-                    Text("Accuracy: High (GPS + WiFi)")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(.black.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(.white.opacity(0.1)))
-                    Spacer()
+            ZStack {
+                if isPreview {
+                    LinearGradient(colors: [Color(white: 0.1), .black], startPoint: .top, endPoint: .bottom)
+                        .ignoresSafeArea()
+                } else {
+                    CameraPreview(session: vm.session)
+                        .ignoresSafeArea()
                 }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 20)
-            }
 
-            // Permission overlays
-            if vm.authState == .denied || vm.authState == .restricted {
-                PermissionOverlay(
-                    title: "Camera access is required",
-                    message: "Enable camera permission in Settings",
-                    primaryTitle: "Open Settings",
-                    primaryAction: vm.openSettings
-                )
+                GeometryReader { geo in
+                    ForEach(0..<vm.boxes.count, id: \.self) { index in
+                        let box = vm.boxes[index]
+                        
+                        let x = box.rect.minX * geo.size.width
+                        let width = box.rect.width * geo.size.width
+                        let height = box.rect.height * geo.size.height
+                        let y = (1.0 - box.rect.minY - box.rect.height) * geo.size.height
+                        
+                        ZStack(alignment: .topLeading) {
+                            Rectangle()
+                                .stroke(Color.green, lineWidth: 3)
+                                .frame(width: width, height: height)
+                            
+                            Text("\(box.label) (\(Int(box.confidence * 100))%)")
+                                .font(.caption)
+                                .fontWeight(.bold)
+                                .padding(4)
+                                .background(Color.green)
+                                .foregroundColor(.black)
+                        }
+                        .position(x: x + (width / 2), y: y + (height / 2))
+                    }
+                }
+                .ignoresSafeArea()
+
+                VStack {
+                    DirectionCard()
+                        .padding(.top, 16)
+                        .padding(.horizontal, 16)
+                    Spacer()
+                    HStack {
+                        Text("Accuracy: High (GPS + WiFi)")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(.black.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(.white.opacity(0.1)))
+                        Spacer()
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 20)
+                }
+
+                if vm.authState == .denied || vm.authState == .restricted {
+                    PermissionOverlay(
+                        title: "Camera access is required",
+                        message: "Enable camera permission in Settings",
+                        primaryTitle: "Open Settings",
+                        primaryAction: vm.openSettings
+                    )
+                }
+            }
+            .onAppear {
+                if !isPreview { vm.configureAndMaybeStart() }
+            }
+            .onDisappear {
+                if !isPreview { vm.stop() }
             }
         }
-        .onAppear {
-            if !isPreview { vm.configureAndMaybeStart() }
-        }
-        .onDisappear {
-            if !isPreview { vm.stop() }
-        }
-    }
         
 }
 

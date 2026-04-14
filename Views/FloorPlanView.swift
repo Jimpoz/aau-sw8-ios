@@ -56,10 +56,6 @@ struct FloorPlanView: View {
             VStack {
                 Spacer()
                 HStack {
-                    ZoomControls(
-                        zoomIn: { vm.scale = min(60, vm.scale * 1.2) },
-                        zoomOut: { vm.scale = max(6, vm.scale / 1.2) }
-                    )
                     Spacer()
                 }
                 .padding(.leading, 16)
@@ -70,7 +66,7 @@ struct FloorPlanView: View {
         .safeAreaInset(edge: .top) {
             ZStack(alignment: .bottom) {
                 LinearGradient(
-                    colors: [Color.white.opacity(0.95), Color.white.opacity(0.0)],
+                    colors: [Color.white.opacity(0.98), Color.white.opacity(0.0)],
                     startPoint: .top, endPoint: .bottom
                 )
                 .frame(height: 80)
@@ -127,6 +123,13 @@ struct FloorPlanView: View {
                 }
             }
         }
+        .sheet(isPresented: $showCameraPreciseLocation) {
+            CameraPreciseLocationView(locationManager: locationManager)
+        }
+        .onReceive(locationManager.$lastLocation) { loc in
+            _ = loc // MapKit view reads `LocationManager.lastLocation` directly.
+        }
+
     }
 
     private func floorLabels() -> [String] {
@@ -162,7 +165,6 @@ private struct SearchBar: View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(Color.slate400)
-            // Create different type of input for different type of building, create .env variables
             TextField("Search..", text: $text)
                 .font(.system(size: 15, weight: .medium))
                 .foregroundStyle(Color.slate700)
@@ -280,7 +282,7 @@ private struct BottomRouteCard: View {
                 }
                 Spacer()
                 Button(action: {
-                    // navigate action
+                    
                 }) {
                     Image(systemName: "location.north.fill")
                         .font(.system(size: 18, weight: .bold))
@@ -310,46 +312,69 @@ private struct BottomRouteCard: View {
     }
 }
 
-// Decorative “isometric” plane to match your mock (UI only)
-private struct IsometricPlane: View {
+private struct LocalizationMapView: View {
+    @ObservedObject var locationManager: LocationManager
+
     var body: some View {
-        GeometryReader { proxy in
-            let w = proxy.size.width * 1.2
-            let h = proxy.size.height * 0.75
-
-            ZStack {
-                // plane
-                RoundedRectangle(cornerRadius: 36, style: .continuous)
-                    .fill(Color.white)
-                    .frame(width: w, height: h)
-                    .overlay(RoundedRectangle(cornerRadius: 36).stroke(Color.slate200, lineWidth: 4))
-                    .shadow(color: Color.black.opacity(0.12), radius: 24, x: 0, y: 16)
-                    .rotation3DEffect(.degrees(60), axis: (x: 1, y: 0, z: 0))
-                    .rotationEffect(.degrees(-45))
-                    .scaleEffect(0.8)
-
-                // simple blue corridors / rooms
-                RoundedRectangle(cornerRadius: 10).fill(Color.blue50)
-                    .frame(width: w * 0.5, height: 12)
-                    .offset(x: -w * 0.1, y: -h * 0.05)
-
-                RoundedRectangle(cornerRadius: 10).fill(Color.blue50)
-                    .frame(width: 12, height: h * 0.45)
-                    .offset(x: -w * 0.1, y: h * 0.08)
-
-                RoundedRectangle(cornerRadius: 18)
-                    .fill(Color.slate100)
-                    .frame(width: w * 0.34, height: h * 0.32)
-                    .overlay(
-                        Text("Store")
-                            .font(.system(size: 40, weight: .black))
-                            .foregroundStyle(Color.slate300.opacity(0.6))
-                            .rotationEffect(.degrees(180))
-                    )
-                    .offset(x: w * 0.12, y: h * 0.05)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        ZStack(alignment: .topLeading) {
+            LocalizationMapRepresentable(locationManager: locationManager)
+                .ignoresSafeArea(edges: [.top, .leading, .trailing])
         }
+    }
+}
+
+private struct LocalizationStatusPill: View {
+    @ObservedObject var locationManager: LocationManager
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "location.fill")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(Color.slate700)
+
+            Text(locationManager.localizationModeLabel)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(Color.slate800)
+
+            Spacer(minLength: 0)
+
+            if let loc = locationManager.lastLocation, loc.horizontalAccuracy >= 0 {
+                Text("~\(Int(loc.horizontalAccuracy)) m")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.slate700)
+            } else if locationManager.authorizationStatus == .authorizedWhenInUse || locationManager.authorizationStatus == .authorizedAlways {
+                Text("Locating…")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.slate700)
+            } else {
+                Text("Permission needed")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.slate700)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(.white.opacity(0.96), in: RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.slate100))
+        .modifier(DS.cardShadow())
+    }
+}
+
+private struct LocalizationMapRepresentable: UIViewRepresentable {
+    @ObservedObject var locationManager: LocationManager
+
+    func makeUIView(context: Context) -> MKMapView {
+        let map = MKMapView(frame: .zero)
+        map.showsUserLocation = true
+        map.userTrackingMode = .follow
+        map.isRotateEnabled = true
+        map.mapType = .standard
+        return map
+    }
+
+    
+    func updateUIView(_ uiView: MKMapView, context: Context) {
+        // MapKit will keep the viewport updated in `.follow` mode.
     }
 }
 
