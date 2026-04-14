@@ -3,25 +3,45 @@
 //  aau-sw8-ios
 //
 //  Created by jimpo on 17/02/26.
-//  TO FIX, brainstorm with other members
+//
 
 import SwiftUI
+import MapKit
+import CoreLocation
 
 struct FloorPlanView: View {
     @StateObject private var vm = FloorPlanViewModel()
+    @StateObject private var floorService = FloorPlanService()
     @State private var searchText = ""
-
+    @State private var userLocation: CLLocationCoordinate2D?
+    @State private var locationManager = CLLocationManager()
+    
     var body: some View {
         ZStack {
             Color.slate50.ignoresSafeArea()
+            
+            // Apple Maps Layer (background)
+            if let userLoc = userLocation {
+                MapView(coordinate: userLoc)
+                    .ignoresSafeArea()
+            }
+            
+            // Floor Plan Renderer (overlay)
+            if !floorService.rooms.isEmpty {
+                FloorPlanRenderer(
+                    rooms: floorService.rooms,
+                    userLocation: userLocation.map { CGPoint(x: CGFloat($0.latitude * 1000), y: CGFloat($0.longitude * 1000)) }
+                )
+                .ignoresSafeArea()
+            } else if floorService.isLoading {
+                ProgressView()
+                    .scaleEffect(1.5)
+            }
+            
             DottedBackground().opacity(0.4)
-
-            // Map Area (placeholder isometric plane for UI parity)
-            IsometricPlane()
 
             // Right-aligned Floor Switcher
             VStack {
-                // With safeAreaInset at top, content is already pushed below the notch + search area.
                 FloorSwitcher(
                     labels: floorLabels(),
                     selectedLabel: selectedLabel(),
@@ -32,7 +52,7 @@ struct FloorPlanView: View {
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.trailing, 16)
 
-            // Zoom controls—UI only
+            // Zoom controls
             VStack {
                 Spacer()
                 HStack {
@@ -43,40 +63,68 @@ struct FloorPlanView: View {
                     Spacer()
                 }
                 .padding(.leading, 16)
-                .padding(.bottom, 120) // avoid TabBar area
+                .padding(.bottom, 120)
             }
         }
         
         .safeAreaInset(edge: .top) {
             ZStack(alignment: .bottom) {
-                // Gradient scrim behind the bar, matching your mock
                 LinearGradient(
                     colors: [Color.white.opacity(0.95), Color.white.opacity(0.0)],
                     startPoint: .top, endPoint: .bottom
                 )
-                .frame(height: 80) // scrim height
+                .frame(height: 80)
 
-                // Search Bar (unchanged)
                 SearchBar(text: $searchText)
                     .padding(.horizontal, 16)
                     .padding(.bottom, 8)
             }
         }
+        
         .safeAreaInset(edge: .bottom) {
-            // Removed the if PreviewSupport.isRunning check here!
             BottomRouteCard(
                 title: "Gate A12",
                 subtitle: "Level 2 • 5 min walk",
                 chips: ["Start", "Elevator to L2", "Turn Right"]
             )
             .padding(.horizontal, 16)
-            .padding(.top, 8) // small top spacing from content
+            .padding(.top, 8)
         }
+        
         .navigationTitle("Floor Plan")
         .onAppear {
-            // Match mock data
-            if PreviewSupport.isRunning {
-                vm.availableFloorLabels = ["L1", "L2", "L3", "G", "B1"]
+            setupFloorData()
+            requestUserLocation()
+        }
+        .onChange(of: vm.selectedFloor) { _ in
+            loadFloorGeometry()
+        }
+    }
+    
+    private func setupFloorData() {
+        if PreviewSupport.isRunning {
+            vm.availableFloorLabels = ["L1", "L2", "L3", "G", "B1"]
+            vm.selectedFloor = 1
+            loadFloorGeometry()
+        }
+    }
+    
+    private func loadFloorGeometry() {
+        let floorId = "floor_\(vm.selectedFloor)"
+        Task {
+            await floorService.fetchFloorGeometry(floorId: floorId)
+        }
+    }
+    
+    private func requestUserLocation() {
+        locationManager.requestWhenInUseAuthorization()
+        
+        if locationManager.authorizationStatus == .authorizedWhenInUse ||
+           locationManager.authorizationStatus == .authorizedAlways {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                if let location = locationManager.location?.coordinate {
+                    self.userLocation = location
+                }
             }
         }
     }
@@ -88,18 +136,25 @@ struct FloorPlanView: View {
 
     private func selectedLabel() -> String? {
         if let labels = vm.availableFloorLabels {
-            // Default to L2 in previews if it exists; otherwise first
-            return labels.indices.contains(1) && PreviewSupport.isRunning ? labels[1] : labels.first
+            return labels.indices.contains(vm.selectedFloor) ? labels[vm.selectedFloor] : labels.first
         }
         return "F\(vm.selectedFloor)"
     }
 
     private func selectLabel(_ label: String) {
         if let labels = vm.availableFloorLabels, let idx = labels.firstIndex(of: label) {
-            vm.selectedFloor = idx // translate however your backend defines
+            vm.selectedFloor = idx
         }
     }
 }
+
+// MARK: - Map View
+
+struct MapView: UIViewRepresentable {
+    let coordinate: CLLocationCoordinate2D
+    
+    func makeUIView(context: Context) -> MKMapView {
+        let mapView = MKMapView()
 
 private struct SearchBar: View {
     @Binding var text: String
