@@ -18,7 +18,7 @@ struct FloorPlanView: View {
     
     var body: some View {
         ZStack {
-            Color.slate50.ignoresSafeArea()
+            Color.gray.opacity(0.05).ignoresSafeArea()
             
             // Apple Maps Layer (background)
             if let userLoc = userLocation {
@@ -57,6 +57,7 @@ struct FloorPlanView: View {
                 Spacer()
                 HStack {
                     Spacer()
+                    ZoomControls(zoomIn: {}, zoomOut: {})
                 }
                 .padding(.leading, 16)
                 .padding(.bottom, 120)
@@ -123,13 +124,6 @@ struct FloorPlanView: View {
                 }
             }
         }
-        .sheet(isPresented: $showCameraPreciseLocation) {
-            CameraPreciseLocationView(locationManager: locationManager)
-        }
-        .onReceive(locationManager.$lastLocation) { loc in
-            _ = loc // MapKit view reads `LocationManager.lastLocation` directly.
-        }
-
     }
 
     private func floorLabels() -> [String] {
@@ -158,36 +152,58 @@ struct MapView: UIViewRepresentable {
     
     func makeUIView(context: Context) -> MKMapView {
         let mapView = MKMapView()
+        mapView.showsUserLocation = true
+        mapView.userTrackingMode = .follow
+        mapView.isRotateEnabled = true
+        mapView.mapType = .standard
+        
+        let region = MKCoordinateRegion(
+            center: coordinate,
+            span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
+        )
+        mapView.setRegion(region, animated: false)
+        
+        return mapView
+    }
+    
+    func updateUIView(_ uiView: MKMapView, context: Context) {
+        let region = MKCoordinateRegion(
+            center: coordinate,
+            span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
+        )
+        uiView.setRegion(region, animated: true)
+    }
+}
 
 private struct SearchBar: View {
     @Binding var text: String
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
-                .foregroundStyle(Color.slate400)
+                .foregroundColor(.gray)
             TextField("Search..", text: $text)
                 .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(Color.slate700)
+                .foregroundColor(.black)
                 .textInputAutocapitalization(.words)
-            Divider().frame(height: 20).background(Color.slate200)
+            Divider().frame(height: 20).background(Color.gray.opacity(0.3))
             Button(action: {
                 //to add the navigation function here
                 print("Tapped")
             }) {
                 Image(systemName: "location.north.line")
                     .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(Color.blue600)
+                    .foregroundColor(.blue)
                     .padding(8)
-                    .background(Color.blue50, in: RoundedRectangle(cornerRadius: 10))
+                    .background(Color.blue.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
             }
         }
         .padding(12)
-        .background(DS.cardBackground(), in: RoundedRectangle(cornerRadius: 18))
+        .background(Color.white, in: RoundedRectangle(cornerRadius: 18))
         .overlay(
             RoundedRectangle(cornerRadius: 18)
-                .stroke(Color.slate100, lineWidth: 1)
+                .stroke(Color.gray.opacity(0.2), lineWidth: 1)
         )
-        .modifier(DS.cardShadow())
+        .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 2)
     }
 }
 
@@ -202,14 +218,14 @@ private struct FloorSwitcher: View {
                 Button(action: { onSelect(label) }) {
                     Text(label)
                         .font(.system(size: 12, weight: .heavy))
-                        .foregroundStyle(isSelected(label) ? Color.white : Color.slate500)
+                        .foregroundColor(isSelected(label) ? .white : .gray)
                         .frame(width: 44, height: 44)
                         .background(
-                            isSelected(label) ? Color.blue600 : Color.white.opacity(0.92)
+                            isSelected(label) ? Color.blue : Color.white.opacity(0.92)
                         )
                         .overlay(
                             RoundedRectangle(cornerRadius: 22)
-                                .stroke(Color.slate100, lineWidth: isSelected(label) ? 0 : 1)
+                                .stroke(Color.gray.opacity(0.2), lineWidth: isSelected(label) ? 0 : 1)
                         )
                         .clipShape(Circle())
                         .shadow(color: Color.black.opacity(isSelected(label) ? 0.18 : 0.06),
@@ -223,9 +239,9 @@ private struct FloorSwitcher: View {
         .padding(.vertical, 8)
         .background(Color.white.opacity(0.9), in: Capsule())
         .overlay(
-            Capsule().stroke(Color.slate100, lineWidth: 1)
+            Capsule().stroke(Color.gray.opacity(0.2), lineWidth: 1)
         )
-        .modifier(DS.cardShadow())
+        .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 2)
     }
 
     private func isSelected(_ label: String) -> Bool {
@@ -241,27 +257,27 @@ private struct ZoomControls: View {
         HStack(spacing: 10) {
             Button(action: zoomOut) {
                 Image(systemName: "minus.magnifyingglass")
-                    .foregroundStyle(Color.slate600)
+                    .foregroundColor(.gray)
                     .padding(10)
                     .background(Color.white, in: RoundedRectangle(cornerRadius: 14))
                     .overlay(
                         RoundedRectangle(cornerRadius: 14)
-                            .stroke(Color.slate200, lineWidth: 1)
+                            .stroke(Color.gray.opacity(0.3), lineWidth: 1)
                     )
             }
 
             Button(action: zoomIn) {
                 Image(systemName: "plus.magnifyingglass")
-                    .foregroundStyle(Color.slate600)
+                    .foregroundColor(.gray)
                     .padding(10)
                     .background(Color.white, in: RoundedRectangle(cornerRadius: 14))
                     .overlay(
                         RoundedRectangle(cornerRadius: 14)
-                            .stroke(Color.slate200, lineWidth: 1)
+                            .stroke(Color.gray.opacity(0.3), lineWidth: 1)
                     )
             }
         }
-        .modifier(DS.cardShadow())
+        .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 2)
     }
 }
 
@@ -271,13 +287,13 @@ private struct BottomRouteCard: View {
     let chips: [String]
     var body: some View {
         VStack(spacing: 12) {
-            Capsule().fill(Color.slate200).frame(width: 44, height: 5).opacity(0.8)
+            Capsule().fill(Color.gray.opacity(0.3)).frame(width: 44, height: 5).opacity(0.8)
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(title).font(.system(size: 18, weight: .bold)).foregroundStyle(Color.slate800)
+                    Text(title).font(.system(size: 18, weight: .bold)).foregroundColor(.black)
                     HStack(spacing: 6) {
-                        Circle().fill(Color.success).frame(width: 8, height: 8)
-                        Text(subtitle).font(.system(size: 13, weight: .medium)).foregroundStyle(Color.slate500)
+                        Circle().fill(Color.green).frame(width: 8, height: 8)
+                        Text(subtitle).font(.system(size: 13, weight: .medium)).foregroundColor(.gray)
                     }
                 }
                 Spacer()
@@ -286,10 +302,10 @@ private struct BottomRouteCard: View {
                 }) {
                     Image(systemName: "location.north.fill")
                         .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(Color.white)
+                        .foregroundColor(.white)
                         .padding(12)
-                        .background(Color.blue600, in: Circle())
-                        .shadow(color: Color.blue600.opacity(0.35), radius: 10, x: 0, y: 6)
+                        .background(Color.blue, in: Circle())
+                        .shadow(color: Color.blue.opacity(0.35), radius: 10, x: 0, y: 6)
                 }
             }
             ScrollView(.horizontal, showsIndicators: false) {
@@ -297,84 +313,18 @@ private struct BottomRouteCard: View {
                     ForEach(chips, id: \.self) { c in
                         Text(c)
                             .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(Color.slate700)
+                            .foregroundColor(.black)
                             .padding(.vertical, 8).padding(.horizontal, 12)
-                            .background(Color.slate50, in: RoundedRectangle(cornerRadius: 12))
-                            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.slate100))
+                            .background(Color.gray.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
+                            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.gray.opacity(0.2)))
                     }
                 }
             }
         }
         .padding(14)
         .background(Color.white, in: RoundedRectangle(cornerRadius: 24))
-        .overlay(RoundedRectangle(cornerRadius: 24).stroke(Color.slate100))
+        .overlay(RoundedRectangle(cornerRadius: 24).stroke(Color.gray.opacity(0.2)))
         .shadow(color: Color.black.opacity(0.12), radius: 24, x: 0, y: 12)
-    }
-}
-
-private struct LocalizationMapView: View {
-    @ObservedObject var locationManager: LocationManager
-
-    var body: some View {
-        ZStack(alignment: .topLeading) {
-            LocalizationMapRepresentable(locationManager: locationManager)
-                .ignoresSafeArea(edges: [.top, .leading, .trailing])
-        }
-    }
-}
-
-private struct LocalizationStatusPill: View {
-    @ObservedObject var locationManager: LocationManager
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "location.fill")
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(Color.slate700)
-
-            Text(locationManager.localizationModeLabel)
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(Color.slate800)
-
-            Spacer(minLength: 0)
-
-            if let loc = locationManager.lastLocation, loc.horizontalAccuracy >= 0 {
-                Text("~\(Int(loc.horizontalAccuracy)) m")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Color.slate700)
-            } else if locationManager.authorizationStatus == .authorizedWhenInUse || locationManager.authorizationStatus == .authorizedAlways {
-                Text("Locating…")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Color.slate700)
-            } else {
-                Text("Permission needed")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Color.slate700)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(.white.opacity(0.96), in: RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.slate100))
-        .modifier(DS.cardShadow())
-    }
-}
-
-private struct LocalizationMapRepresentable: UIViewRepresentable {
-    @ObservedObject var locationManager: LocationManager
-
-    func makeUIView(context: Context) -> MKMapView {
-        let map = MKMapView(frame: .zero)
-        map.showsUserLocation = true
-        map.userTrackingMode = .follow
-        map.isRotateEnabled = true
-        map.mapType = .standard
-        return map
-    }
-
-    
-    func updateUIView(_ uiView: MKMapView, context: Context) {
-        // MapKit will keep the viewport updated in `.follow` mode.
     }
 }
 
