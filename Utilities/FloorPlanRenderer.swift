@@ -15,7 +15,7 @@ struct FloorPlanRenderer: View {
     @State private var offset: CGSize = .zero
     
     var body: some View {
-        Canvas { context in
+        Canvas { context, size  in
             // Draw rooms
             for room in rooms {
                 drawRoom(room: room, in: &context)
@@ -57,16 +57,16 @@ struct FloorPlanRenderer: View {
         // Fill color based on room type
         let fillColor = colorForRoomType(room.type)
         
-        // Draw filled room
+        // Draw filled room using .opacity() instead of withAlphaComponent()
         context.fill(
             path,
-            with: .color(fillColor.withAlphaComponent(0.7))
+            with: .color(fillColor.opacity(0.7))
         )
         
-        // Draw border
+        // Draw border using .opacity()
         context.stroke(
             path,
-            with: .color(.black.withAlphaComponent(0.3)),
+            with: .color(Color.black.opacity(0.3)),
             lineWidth: 2
         )
         
@@ -76,14 +76,12 @@ struct FloorPlanRenderer: View {
             var stringContext = context
             stringContext.translateBy(x: labelPoint.x, y: labelPoint.y)
             
-            let attributedString = AttributedString(room.name)
-            let resolved = stringContext.resolveSymbolImage(for: Text(attributedString))
-            
+            // Draw text directly; no need to resolve symbol images here
             stringContext.draw(
                 Text(room.name)
                     .font(.caption2)
                     .foregroundColor(.black),
-                at: labelPoint,
+                at: .zero, // Use .zero because we already translated the context to labelPoint
                 anchor: .center
             )
         }
@@ -142,6 +140,7 @@ struct FloorPlanRenderer: View {
     }
 }
 
+// Ensure you have a matching Room and RoomType struct/enum somewhere in your project for the preview to work
 #Preview {
     FloorPlanRenderer(
         rooms: [

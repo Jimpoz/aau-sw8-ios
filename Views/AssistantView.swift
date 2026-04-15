@@ -33,7 +33,7 @@ struct AssistantView: View {
             // Messages
             ScrollViewReader { reader in
                 ScrollView {
-                    LazyVStack(spacing: 10, alignment: .leading) {
+                    LazyVStack(alignment: .leading, spacing: 10) {
                         ForEach(vm.messages) { msg in
                             HStack {
                                 if msg.role == .assistant {

@@ -67,6 +67,8 @@ enum RoomType: String, Codable {
     case storage
     case hallway
     case other
+    case exit
+    case entrance
 }
 
 // Points of Interest

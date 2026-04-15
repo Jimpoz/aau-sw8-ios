@@ -8,6 +8,7 @@
 
 import Foundation
 import Combine
+internal import _LocationEssentials
 
 struct ChatItem: Identifiable {
     enum Role { case user, assistant }
