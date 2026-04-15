@@ -9,6 +9,21 @@ import Foundation
 import CoreLocation
 import Combine
 
+extension CLLocationCoordinate2D: @retroactive Codable {
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.unkeyedContainer()
+        try container.encode(latitude)
+        try container.encode(longitude)
+    }
+
+    public init(from decoder: Decoder) throws {
+        var container = try decoder.unkeyedContainer()
+        let lat = try container.decode(Double.self)
+        let lon = try container.decode(Double.self)
+        self.init(latitude: lat, longitude: lon)
+    }
+}
+
 
 // General building
 struct Building: Identifiable, Codable {
