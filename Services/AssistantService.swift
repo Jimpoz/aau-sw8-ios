@@ -37,7 +37,7 @@ final class AssistantService: NSObject, LLMChatting {
     ///   - campusId: Campus identifier
     ///   - session: URLSession for networking (default creates new configured session)
     init(
-        backendURL: String = ProcessInfo.processInfo.environment["BACKEND_URL"] ?? "http://localhost:8000",
+        backendURL: String = ProcessInfo.processInfo.environment["BACKEND_URL"] ?? "https://retaliatory-bruna-unofficious.ngrok-free.dev",
         campusId: String = "campus_001",
         session: URLSession = {
             let config = URLSessionConfiguration.default

@@ -49,8 +49,10 @@ struct Room: Identifiable, Codable {
     let id: String
     var name: String                     // "Room 2.228", "Gate A12", "McDonald's",
     var type: RoomType
-    var centroid: CGPoint?               // For labeling on map
-    var polygon: [CGPoint]?              // Optional room shape
+    var centroid: CGPoint?               // Local coordinates for labeling on map
+    var centroidGlobal: CLLocationCoordinate2D?  // Global lat/lng for map overlay
+    var polygon: [CGPoint]?              // Local coordinate room shape
+    var polygonGlobal: [CLLocationCoordinate2D]? // Global coordinate room shape
     var metadata: [String: String]?      // Department, restrictions, Opening hours, Holidays, etc.
 }
 

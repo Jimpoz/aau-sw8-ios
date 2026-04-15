@@ -15,6 +15,8 @@ struct FloorPlanView: View {
     @State private var searchText = ""
     @State private var userLocation: CLLocationCoordinate2D?
     @State private var locationManager = CLLocationManager()
+    @State private var showFloorOverlay = false
+    @State private var currentBuildingId: String?
     
     var body: some View {
         ZStack {
@@ -22,35 +24,47 @@ struct FloorPlanView: View {
             
             // Apple Maps Layer (background)
             if let userLoc = userLocation {
-                MapView(coordinate: userLoc)
-                    .ignoresSafeArea()
-            }
-            
-            // Floor Plan Renderer (overlay)
-            if !floorService.rooms.isEmpty {
-                FloorPlanRenderer(
+                MapViewWithOverlay(
+                    coordinate: userLoc,
+                    showFloorOverlay: $showFloorOverlay,
                     rooms: floorService.rooms,
-                    userLocation: userLocation.map { CGPoint(x: CGFloat($0.latitude * 1000), y: CGFloat($0.longitude * 1000)) }
+                    onBuildingZoom: { buildingId in
+                        self.currentBuildingId = buildingId
+                        self.showFloorOverlay = true
+                        // Load floor data for the building
+                        if let buildingId = buildingId {
+                            loadBuildingFloorData(buildingId: buildingId)
+                        }
+                    },
+                    onZoomOut: {
+                        self.showFloorOverlay = false
+                        self.currentBuildingId = nil
+                    }
                 )
                 .ignoresSafeArea()
-            } else if floorService.isLoading {
+            }
+            
+            // Loading indicator
+            if floorService.isLoading {
                 ProgressView()
                     .scaleEffect(1.5)
             }
             
             DottedBackground().opacity(0.4)
 
-            // Right-aligned Floor Switcher
-            VStack {
-                FloorSwitcher(
-                    labels: floorLabels(),
-                    selectedLabel: selectedLabel(),
-                    onSelect: selectLabel(_:)
-                )
-                Spacer()
+            // Right-aligned Floor Switcher (only when overlay is active)
+            if showFloorOverlay {
+                VStack {
+                    FloorSwitcher(
+                        labels: floorLabels(),
+                        selectedLabel: selectedLabel(),
+                        onSelect: selectLabel(_:)
+                    )
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.trailing, 16)
             }
-            .frame(maxWidth: .infinity, alignment: .trailing)
-            .padding(.trailing, 16)
 
             // Zoom controls
             VStack {
@@ -94,7 +108,9 @@ struct FloorPlanView: View {
             requestUserLocation()
         }
         .onChange(of: vm.selectedFloor) { _ in
-            loadFloorGeometry()
+            if showFloorOverlay, let buildingId = currentBuildingId {
+                loadBuildingFloorData(buildingId: buildingId)
+            }
         }
     }
     
@@ -102,12 +118,19 @@ struct FloorPlanView: View {
         if PreviewSupport.isRunning {
             vm.availableFloorLabels = ["L1", "L2", "L3", "G", "B1"]
             vm.selectedFloor = 1
-            loadFloorGeometry()
         }
     }
     
     private func loadFloorGeometry() {
         let floorId = "floor_\(vm.selectedFloor)"
+        Task {
+            await floorService.fetchFloorGeometry(floorId: floorId)
+        }
+    }
+    
+    private func loadBuildingFloorData(buildingId: String) {
+        // Construct floor ID based on building and selected floor
+        let floorId = "\(buildingId)_floor_\(vm.selectedFloor)"
         Task {
             await floorService.fetchFloorGeometry(floorId: floorId)
         }
@@ -145,10 +168,14 @@ struct FloorPlanView: View {
     }
 }
 
-// MARK: - Map View
+// MARK: - Map View with Overlay
 
-struct MapView: UIViewRepresentable {
+struct MapViewWithOverlay: UIViewRepresentable {
     let coordinate: CLLocationCoordinate2D
+    @Binding var showFloorOverlay: Bool
+    let rooms: [Room]
+    let onBuildingZoom: (String?) -> Void
+    let onZoomOut: () -> Void
     
     func makeUIView(context: Context) -> MKMapView {
         let mapView = MKMapView()
@@ -156,6 +183,7 @@ struct MapView: UIViewRepresentable {
         mapView.userTrackingMode = .follow
         mapView.isRotateEnabled = true
         mapView.mapType = .standard
+        mapView.delegate = context.coordinator
         
         let region = MKCoordinateRegion(
             center: coordinate,
@@ -167,11 +195,226 @@ struct MapView: UIViewRepresentable {
     }
     
     func updateUIView(_ uiView: MKMapView, context: Context) {
-        let region = MKCoordinateRegion(
-            center: coordinate,
-            span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
-        )
-        uiView.setRegion(region, animated: true)
+        // Set initial region only once — avoids fighting user pan/zoom
+        if !context.coordinator.initialRegionSet {
+            let region = MKCoordinateRegion(
+                center: coordinate,
+                span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
+            )
+            uiView.setRegion(region, animated: false)
+            context.coordinator.initialRegionSet = true
+        }
+
+        // Rebuild overlays whenever rooms or showFloorOverlay changes
+        uiView.removeOverlays(uiView.overlays)
+
+        if showFloorOverlay && !rooms.isEmpty {
+            let overlays = buildOverlays(for: rooms)
+            uiView.addOverlays(overlays, level: .aboveRoads)
+        }
+    }
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+    
+    private func buildOverlays(for rooms: [Room]) -> [MKOverlay] {
+        var overlays: [MKOverlay] = []
+
+        // Dimmer: large dark polygon that fades out the world outside the building
+        var dimmerCoords = dimmerPolygonCoords()
+        let dimmer = MKPolygon(coordinates: &dimmerCoords, count: dimmerCoords.count)
+        dimmer.title = "dimmer"
+        overlays.append(dimmer)
+
+        // One MKPolygon per room using polygon_global coordinates from backend
+        for room in rooms {
+            guard var coords = room.polygonGlobal, coords.count >= 3 else { continue }
+            let polygon = MKPolygon(coordinates: &coords, count: coords.count)
+            polygon.title = room.type.rawValue
+            polygon.subtitle = room.name
+            overlays.append(polygon)
+        }
+
+        return overlays
+    }
+
+    private func dimmerPolygonCoords() -> [CLLocationCoordinate2D] {
+        // 0.5-degree box around AAU CPH — covers the full visible map when zoomed in
+        let d = 0.5
+        return [
+            CLLocationCoordinate2D(latitude: 55.6588 + d, longitude: 12.5055 - d),
+            CLLocationCoordinate2D(latitude: 55.6588 + d, longitude: 12.5055 + d),
+            CLLocationCoordinate2D(latitude: 55.6588 - d, longitude: 12.5055 + d),
+            CLLocationCoordinate2D(latitude: 55.6588 - d, longitude: 12.5055 - d),
+        ]
+    }
+    
+    class Coordinator: NSObject, MKMapViewDelegate {
+        var parent: MapViewWithOverlay
+        var initialRegionSet = false
+
+        init(_ parent: MapViewWithOverlay) {
+            self.parent = parent
+        }
+        
+        func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {
+            let span = mapView.region.span
+            let zoomLevel = span.latitudeDelta
+            
+            // Detect building-level zoom (latitudeDelta < 0.003 ≈ ~300 m visible)
+            if zoomLevel < 0.003 {
+                // AAU Copenhagen — A.C. Meyer Vænge 15
+                let buildingLat = 55.6588
+                let buildingLng = 12.5055
+                let buildingLocation = CLLocation(latitude: buildingLat, longitude: buildingLng)
+                let mapCenter = CLLocation(latitude: mapView.centerCoordinate.latitude,
+                                           longitude: mapView.centerCoordinate.longitude)
+
+                let distance = buildingLocation.distance(from: mapCenter)
+                if distance < 200 { // Within 200 m of building
+                    parent.onBuildingZoom("building_acm15")
+                } else {
+                    parent.onZoomOut()
+                }
+            } else {
+                parent.onZoomOut()
+            }
+        }
+        
+        func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
+            if let polygon = overlay as? MKPolygon {
+                let renderer = MKPolygonRenderer(polygon: polygon)
+                if polygon.title == "dimmer" {
+                    renderer.fillColor = UIColor.black.withAlphaComponent(0.35)
+                    renderer.strokeColor = .clear
+                    renderer.lineWidth = 0
+                } else {
+                    let color = uiColorForRoomType(polygon.title ?? "")
+                    renderer.fillColor = color.withAlphaComponent(0.65)
+                    renderer.strokeColor = color.withAlphaComponent(0.9)
+                    renderer.lineWidth = 1.5
+                }
+                return renderer
+            }
+            if let floorOverlay = overlay as? FloorPlanOverlay {
+                return FloorPlanOverlayRenderer(overlay: floorOverlay, rooms: parent.rooms)
+            }
+            return MKOverlayRenderer(overlay: overlay)
+        }
+
+        private func uiColorForRoomType(_ type: String) -> UIColor {
+            switch type {
+            case "classroom":   return UIColor(red: 0.22, green: 0.72, blue: 0.42, alpha: 1)
+            case "office":      return UIColor(red: 0.35, green: 0.60, blue: 0.90, alpha: 1)
+            case "meetingRoom": return UIColor(red: 0.60, green: 0.40, blue: 0.90, alpha: 1)
+            case "restroom":    return UIColor(red: 0.20, green: 0.70, blue: 0.90, alpha: 1)
+            case "restaurant":  return UIColor(red: 1.00, green: 0.78, blue: 0.20, alpha: 1)
+            case "shop":        return UIColor(red: 1.00, green: 0.50, blue: 0.50, alpha: 1)
+            case "entrance":    return UIColor(red: 1.00, green: 0.62, blue: 0.22, alpha: 1)
+            case "exit":        return UIColor(red: 0.90, green: 0.28, blue: 0.28, alpha: 1)
+            case "hallway":     return UIColor(red: 0.88, green: 0.88, blue: 0.88, alpha: 1)
+            default:            return UIColor(red: 0.94, green: 0.94, blue: 0.96, alpha: 1)
+            }
+        }
+    }
+}
+
+// MARK: - Floor Plan Overlay Classes
+
+class FloorPlanOverlay: NSObject, MKOverlay {
+    let coordinate: CLLocationCoordinate2D
+    let boundingMapRect: MKMapRect
+    
+    init(coordinate: CLLocationCoordinate2D, boundingMapRect: MKMapRect) {
+        self.coordinate = coordinate
+        self.boundingMapRect = boundingMapRect
+    }
+}
+
+class FloorPlanOverlayRenderer: MKOverlayRenderer {
+    let rooms: [Room]
+    
+    init(overlay: MKOverlay, rooms: [Room]) {
+        self.rooms = rooms
+        super.init(overlay: overlay)
+    }
+    
+    override func draw(_ mapRect: MKMapRect, zoomScale: MKZoomScale, in context: CGContext) {
+        // Draw floor plan rooms as overlay on the map
+        for room in rooms {
+            guard let polygon = room.polygon, polygon.count > 2 else { continue }
+            
+            // Convert room coordinates to map points
+            // This would need coordinate transformation from floor plan to lat/lng
+            // For now, we'll skip the actual drawing implementation
+        }
+    }
+}
+
+// MARK: - Floor Plan Overlay Renderer (SwiftUI)
+
+struct FloorPlanOverlayView: View {
+    let rooms: [Room]
+    let userLocation: CGPoint?
+    
+    var body: some View {
+        Canvas { context, size in
+            // Draw rooms with semi-transparent overlay effect
+            for room in rooms {
+                drawRoomOverlay(room: room, in: &context)
+            }
+            
+            // Draw user location
+            if let userLoc = userLocation {
+                drawUserLocationOverlay(at: userLoc, in: &context)
+            }
+        }
+        .opacity(0.8) // Make it semi-transparent to show map underneath
+    }
+    
+    private func drawRoomOverlay(room: Room, in context: inout GraphicsContext) {
+        guard let polygon = room.polygon, polygon.count > 2 else { return }
+        
+        var path = Path()
+        let firstPoint = polygon[0]
+        path.move(to: firstPoint)
+        
+        for i in 1..<polygon.count {
+            let point = polygon[i]
+            path.addLine(to: point)
+        }
+        path.closeSubpath()
+        
+        let fillColor = colorForRoomType(room.type.rawValue)
+        context.fill(path, with: .color(fillColor.opacity(0.5)))
+        context.stroke(path, with: .color(fillColor), lineWidth: 3)
+    }
+    
+    private func drawUserLocationOverlay(at point: CGPoint, in context: inout GraphicsContext) {
+        let transformedPoint = CGPoint(x: point.x * 10, y: point.y * 10)
+        
+        var circlePath = Path()
+        circlePath.addEllipse(in: CGRect(
+            x: transformedPoint.x - 10,
+            y: transformedPoint.y - 10,
+            width: 20,
+            height: 20
+        ))
+        
+        context.fill(circlePath, with: .color(Color.blue.opacity(0.7)))
+        context.stroke(circlePath, with: .color(.blue), lineWidth: 2)
+    }
+    
+    private func colorForRoomType(_ type: String) -> Color {
+        switch type {
+        case "classroom": return .green
+        case "hallway": return .gray
+        case "restroom": return .blue
+        case "entrance": return .orange
+        case "exit": return .red
+        default: return .purple
+        }
     }
 }
 

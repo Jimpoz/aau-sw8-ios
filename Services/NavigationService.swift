@@ -17,7 +17,7 @@ class NavigationService: ObservableObject {
     private let baseURL: URL
     private let session: URLSession
     
-    init(baseURL: URL = URL(string: "http://localhost:8000/api/v1")!) {
+    init(baseURL: URL = URL(string: "https://retaliatory-bruna-unofficious.ngrok-free.dev/api/v1")!) {
         self.baseURL = baseURL
         self.session = URLSession.shared
     }
@@ -29,11 +29,11 @@ class NavigationService: ObservableObject {
             self.error = nil
         }
         
-        let endpoint = baseURL.appendingPathComponent("navigation/navigate")
+        let endpoint = baseURL.appendingPathComponent("navigate")
         var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false)
         components?.queryItems = [
-            URLQueryItem(name: "start", value: startSpaceId),
-            URLQueryItem(name: "end", value: endSpaceId)
+            URLQueryItem(name: "from", value: startSpaceId),
+            URLQueryItem(name: "to", value: endSpaceId)
         ]
         
         guard let url = components?.url else {
