@@ -119,6 +119,19 @@ final class AssistantService: NSObject, LLMChatting {
         return chatResponse.answer
     }
     
+    /// Ping the backend health endpoint
+    func checkHealth() async -> Bool {
+        guard let url = URL(string: "\(backendURL)/health") else { return false }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 8
+        do {
+            let (_, response) = try await session.data(for: request)
+            return (response as? HTTPURLResponse).map { (200...299).contains($0.statusCode) } ?? false
+        } catch {
+            return false
+        }
+    }
+
     /// Retrieve available space types for suggestions
     /// - Returns: List of space types the assistant can help find
     /// - Throws: NetworkError or DecodingError

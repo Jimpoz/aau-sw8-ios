@@ -15,16 +15,38 @@ struct AssistantView: View {
             
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
-                    Circle().fill(Color.success).frame(width: 8, height: 8)
-                        .shadow(color: .success.opacity(0.6), radius: 4, x: 0, y: 0)
+                    // Status indicator
+                    if case .checking = vm.connectionState {
+                        ProgressView()
+                            .progressViewStyle(.circular)
+                            .scaleEffect(0.65)
+                            .frame(width: 8, height: 8)
+                    } else {
+                        Circle()
+                            .fill(vm.connectionState.dotColor)
+                            .frame(width: 8, height: 8)
+                            .shadow(color: vm.connectionState.dotColor.opacity(0.6), radius: 4)
+                    }
                     Text("Virtual Assistant")
                         .font(.system(size: 18, weight: .bold))
                         .foregroundStyle(Color.slate800)
                     Spacer()
+                    // Retry button
+                    if case .failed = vm.connectionState {
+                        Button {
+                            vm.checkConnection()
+                        } label: {
+                            Label("Retry", systemImage: "arrow.clockwise")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(Color.blue600)
+                        }
+                    }
                 }
-                Text("Online • AI Powered Guide")
+                Text(vm.connectionState.statusText)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Color.slate500)
+                    .foregroundStyle(
+                        vm.connectionState.isConnected ? Color.slate500 : vm.connectionState.dotColor
+                    )
             }
             .padding(.horizontal, 16).padding(.vertical, 12)
             .background(.white)
@@ -103,7 +125,7 @@ struct AssistantView: View {
                         .font(.system(size: 14))
                         .foregroundStyle(Color.slate800)
                         .textInputAutocapitalization(.sentences)
-                        .disabled(vm.isLoading)
+                        .disabled(vm.isLoading || !vm.connectionState.isConnected)
                     
                     Button { /* To add a mic function for voice texting */ } label: {
                         Image(systemName: "mic")
@@ -129,7 +151,11 @@ struct AssistantView: View {
                 .padding(10)
                 .background(Color.blue600, in: Circle())
                 .shadow(color: .blue600.opacity(0.35), radius: 8, x: 0, y: 5)
-                .disabled(vm.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || vm.isLoading)
+                .disabled(
+                    vm.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    || vm.isLoading
+                    || !vm.connectionState.isConnected
+                )
             }
             .padding(.horizontal, 16).padding(.vertical, 12)
             .background(.white)

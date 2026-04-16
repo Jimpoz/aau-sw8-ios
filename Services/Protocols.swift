@@ -17,4 +17,9 @@ public protocol SpatialQuerying {
 
 public protocol LLMChatting {
     func send(userText: String, context: [String: Any]) async throws -> String
+    func checkHealth() async -> Bool
+}
+
+public extension LLMChatting {
+    func checkHealth() async -> Bool { return true }
 }
