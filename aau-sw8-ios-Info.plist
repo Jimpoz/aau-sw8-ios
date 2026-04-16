@@ -4,5 +4,9 @@
 <dict>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>This app requires to access your location in order to help you navigate within indoor facilities.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Microphone access is needed so you can ask the virtual assistant questions using your voice.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Speech recognition converts your voice into text so you can speak your questions to the assistant.</string>
 </dict>
 </plist>

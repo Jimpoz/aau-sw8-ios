@@ -5,6 +5,7 @@
 //  Created by jimpo on 17/02/26.
 //
 import SwiftUI
+import UIKit
 
 struct AssistantView: View {
     @StateObject private var vm = AssistantViewModel()
@@ -118,24 +119,47 @@ struct AssistantView: View {
             }
             .background(Color.slate50)
 
+            if vm.isRecording {
+                HStack(spacing: 6) {
+                    RecordingDot()
+                    Text("Listening… tap mic to stop")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Color.red)
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 6)
+                .background(Color.red.opacity(0.06))
+            }
+
             // Composer
             HStack(spacing: 8) {
                 HStack {
-                    TextField("Ask anything…", text: $vm.input)
+                    TextField(vm.isRecording ? "Listening…" : "Ask anything…", text: $vm.input)
                         .font(.system(size: 14))
                         .foregroundStyle(Color.slate800)
                         .textInputAutocapitalization(.sentences)
                         .disabled(vm.isLoading || !vm.connectionState.isConnected)
-                    
-                    Button { /* To add a mic function for voice texting */ } label: {
-                        Image(systemName: "mic")
+
+                    Button { vm.toggleVoiceInput() } label: {
+                        Image(systemName: vm.isRecording ? "waveform" : "mic")
                             .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(Color.slate500)
+                            .foregroundStyle(vm.isRecording ? Color.red : Color.slate500)
                     }
                     .disabled(vm.isLoading)
                 }
                 .padding(.horizontal, 14).padding(.vertical, 10)
-                .background(Color.slate100, in: Capsule())
+                .background(
+                    vm.isRecording
+                        ? Color.red.opacity(0.08)
+                        : Color.slate100,
+                    in: Capsule()
+                )
+                .overlay(
+                    vm.isRecording
+                        ? Capsule().stroke(Color.red.opacity(0.3), lineWidth: 1)
+                        : nil
+                )
 
                 Button(action: vm.send) {
                     if vm.isLoading {
@@ -165,6 +189,32 @@ struct AssistantView: View {
         .onAppear {
             vm.configure(with: container)
         }
+        .alert("Microphone Access Required", isPresented: $vm.speechPermissionDenied) {
+            Button("Open Settings") {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Please enable microphone and speech recognition access in Settings to use voice input.")
+        }
+    }
+}
+
+// MARK: - Recording dot animation
+
+private struct RecordingDot: View {
+    @State private var pulse = false
+
+    var body: some View {
+        Circle()
+            .fill(Color.red)
+            .frame(width: 8, height: 8)
+            .scaleEffect(pulse ? 1.4 : 1.0)
+            .opacity(pulse ? 0.5 : 1.0)
+            .animation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true), value: pulse)
+            .onAppear { pulse = true }
     }
 }
 
