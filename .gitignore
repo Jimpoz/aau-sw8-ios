@@ -25,3 +25,4 @@ fastlane/screenshots
 fastlane/test_output
 aau-sw8-ios.xcodeproj/
 *.mlmodel
+AppSecrets.swift

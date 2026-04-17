@@ -18,7 +18,7 @@ class FloorPlanService: ObservableObject {
     private let baseURL: URL
     private let session: URLSession
 
-    init(baseURL: URL = URL(string: "https://retaliatory-bruna-unofficious.ngrok-free.dev/api/v1")!) {
+    init(baseURL: URL = URL(string: AppSecrets.backendURL + "/api/v1")!) {
         self.baseURL = baseURL
         self.session = URLSession.shared
     }
@@ -32,6 +32,7 @@ class FloorPlanService: ObservableObject {
 
         var request = URLRequest(url: baseURL.appendingPathComponent("floors/\(floorId)/display"))
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(AppSecrets.apiSecret, forHTTPHeaderField: "X-Api-Key")
 
         do {
             let (data, response) = try await session.data(for: request)
@@ -60,8 +61,11 @@ class FloorPlanService: ObservableObject {
     func fetchFloor(floorId: String) async -> Floor? {
         let url = baseURL.appendingPathComponent("floors/\(floorId)")
 
+        var floorRequest = URLRequest(url: url)
+        floorRequest.setValue(AppSecrets.apiSecret, forHTTPHeaderField: "X-Api-Key")
+
         do {
-            let (data, response) = try await session.data(from: url)
+            let (data, response) = try await session.data(for: floorRequest)
 
             guard let httpResponse = response as? HTTPURLResponse,
                   (200...299).contains(httpResponse.statusCode) else {

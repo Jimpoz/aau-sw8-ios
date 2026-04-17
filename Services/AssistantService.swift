@@ -37,7 +37,7 @@ final class AssistantService: NSObject, LLMChatting {
     ///   - campusId: Campus identifier
     ///   - session: URLSession for networking (default creates new configured session)
     init(
-        backendURL: String = ProcessInfo.processInfo.environment["BACKEND_URL"] ?? "https://retaliatory-bruna-unofficious.ngrok-free.dev",
+        backendURL: String = AppSecrets.backendURL,
         campusId: String = "campus_001",
         session: URLSession = {
             let config = URLSessionConfiguration.default
@@ -94,6 +94,7 @@ final class AssistantService: NSObject, LLMChatting {
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue(AppSecrets.apiSecret, forHTTPHeaderField: "X-Api-Key")
         urlRequest.httpBody = requestBody
         urlRequest.timeoutInterval = 30
         
@@ -123,6 +124,7 @@ final class AssistantService: NSObject, LLMChatting {
     func checkHealth() async -> Bool {
         guard let url = URL(string: "\(backendURL)/health") else { return false }
         var request = URLRequest(url: url)
+        request.setValue(AppSecrets.apiSecret, forHTTPHeaderField: "X-Api-Key")
         request.timeoutInterval = 8
         do {
             let (_, response) = try await session.data(for: request)
@@ -139,8 +141,10 @@ final class AssistantService: NSObject, LLMChatting {
         guard let url = URL(string: "\(backendURL)/api/v1/assistant/spaces-by-type?campus_id=\(campusId)&space_type=*") else {
             throw URLError(.badURL)
         }
-        
-        let (data, response) = try await session.data(from: url)
+
+        var spaceTypesRequest = URLRequest(url: url)
+        spaceTypesRequest.setValue(AppSecrets.apiSecret, forHTTPHeaderField: "X-Api-Key")
+        let (data, response) = try await session.data(for: spaceTypesRequest)
         
         guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
             throw URLError(.badServerResponse)

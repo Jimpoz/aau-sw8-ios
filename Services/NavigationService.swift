@@ -17,7 +17,7 @@ class NavigationService: ObservableObject {
     private let baseURL: URL
     private let session: URLSession
     
-    init(baseURL: URL = URL(string: "https://retaliatory-bruna-unofficious.ngrok-free.dev/api/v1")!) {
+    init(baseURL: URL = URL(string: AppSecrets.backendURL + "/api/v1")!) {
         self.baseURL = baseURL
         self.session = URLSession.shared
     }
@@ -43,9 +43,12 @@ class NavigationService: ObservableObject {
             }
             return
         }
-        
+
+        var navRequest = URLRequest(url: url)
+        navRequest.setValue(AppSecrets.apiSecret, forHTTPHeaderField: "X-Api-Key")
+
         do {
-            let (data, response) = try await session.data(from: url)
+            let (data, response) = try await session.data(for: navRequest)
             
             guard let httpResponse = response as? HTTPURLResponse,
                   (200...299).contains(httpResponse.statusCode) else {
@@ -83,9 +86,12 @@ class NavigationService: ObservableObject {
         ]
         
         guard let url = components?.url else { return nil }
-        
+
+        var vizRequest = URLRequest(url: url)
+        vizRequest.setValue(AppSecrets.apiSecret, forHTTPHeaderField: "X-Api-Key")
+
         do {
-            let (data, response) = try await session.data(from: url)
+            let (data, response) = try await session.data(for: vizRequest)
             
             guard let httpResponse = response as? HTTPURLResponse,
                   (200...299).contains(httpResponse.statusCode) else {

@@ -8,6 +8,7 @@
 import SwiftUI
 import MapKit
 import CoreLocation
+import Combine
 
 final class MapActionProxy: ObservableObject {
     weak var mapView: MKMapView?
@@ -128,16 +129,21 @@ struct FloorPlanView: View {
         }
 
         .safeAreaInset(edge: .bottom) {
-            VStack(alignment: .trailing, spacing: 8) {
-                Button { mapProxy.centerOnUser() } label: {
-                    Image(systemName: "location.fill")
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(.white)
-                        .padding(14)
-                        .background(Color.blue, in: Circle())
-                        .shadow(color: Color.blue.opacity(0.35), radius: 10, x: 0, y: 6)
+            VStack(spacing: 8) {
+                HStack {
+                    Spacer() // Pushes everything after it to the right
+                    
+                    Button { mapProxy.centerOnUser() } label: {
+                        Image(systemName: "location.fill")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(14)
+                            .background(Color.blue, in: Circle())
+                            .shadow(color: Color.blue.opacity(0.35), radius: 10, x: 0, y: 6)
+                    }
+                    .padding(.trailing, 16)
                 }
-                .padding(.trailing, 16)
+                .padding(.bottom,8)
 
                 if let dest = routeDestination {
                     BottomRouteCard(destination: dest) {
@@ -147,6 +153,7 @@ struct FloorPlanView: View {
                     .padding(.horizontal, 16)
                 }
             }
+            .frame(maxWidth: .infinity)
             .padding(.top, 4)
         }
 
