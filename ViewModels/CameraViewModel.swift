@@ -5,29 +5,29 @@
 //  Created by jimpo on 19/02/26.
 //
 
-
 import AVFoundation
-import Vision
+import Combine
 import CoreGraphics
 import UIKit
-import Combine
 
 final class CameraViewModel: NSObject, ObservableObject {
-    // Could decrease the number of states
-    
     @Published var authState: AVAuthorizationStatus = .notDetermined
     @Published var boxes: [DetectionBox] = []
 
     let session = AVCaptureSession()
     private let sessionQueue = DispatchQueue(label: "camera.session.queue")
-
     private let videoOutput = AVCaptureVideoDataOutput()
-    private var visionRequests: [VNRequest] = []
     private var configured = false
+
+    private let streamingService = VisionStreamingService()
+    private var cancellables = Set<AnyCancellable>()
 
     override init() {
         super.init()
-        setupVision()
+        streamingService.$detections
+            .receive(on: DispatchQueue.main)
+            .assign(to: \.boxes, on: self)
+            .store(in: &cancellables)
     }
 
     func configureAndMaybeStart() {
@@ -64,6 +64,9 @@ final class CameraViewModel: NSObject, ObservableObject {
             guard self.configured, !self.session.isRunning else { return }
             self.session.startRunning()
         }
+        // AppSecrets.mlVisionURL  — "ws://<YOUR_PC_IP>:8000"
+        // AppSecrets.facilityId   — e.g. "example_facility_id"
+        streamingService.connect(baseURL: AppSecrets.mlVisionURL, facilityId: AppSecrets.facilityId)
     }
 
     func stop() {
@@ -71,6 +74,7 @@ final class CameraViewModel: NSObject, ObservableObject {
             guard self.session.isRunning else { return }
             self.session.stopRunning()
         }
+        streamingService.disconnect()
     }
 
     func openSettings() {
@@ -109,52 +113,15 @@ final class CameraViewModel: NSObject, ObservableObject {
                 return
             }
 
-            // Video output
             self.videoOutput.videoSettings = [
                 kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
             ]
-            self.videoOutput.setSampleBufferDelegate(self,
-                                                     queue: self.sessionQueue)
+            self.videoOutput.setSampleBufferDelegate(self, queue: self.sessionQueue)
             self.videoOutput.alwaysDiscardsLateVideoFrames = true
 
             if self.session.canAddOutput(self.videoOutput) {
                 self.session.addOutput(self.videoOutput)
             }
-        }
-    }
-
-    private func setupVision() {
-        do {
-            // Based on YOLOv3 model -> to change
-            let config = MLModelConfiguration()
-            let model = try YOLOv3(configuration: config).model
-            let visionModel = try VNCoreMLModel(for: model)
-
-            let request = VNCoreMLRequest(model: visionModel) { [weak self] request, error in
-                self?.handleDetectionResults(request: request, error: error)
-            }
-
-            request.imageCropAndScaleOption = .scaleFill
-            visionRequests = [request]
-
-        } catch {
-            print("Failed to create VNCoreMLModel: \(error)")
-        }
-    }
-
-    private func handleDetectionResults(request: VNRequest, error: Error?) {
-        guard let results = request.results as? [VNRecognizedObjectObservation] else { return }
-
-        let newBoxes = results.map { obs in
-            DetectionBox(
-                rect: obs.boundingBox,
-                label: obs.labels.first?.identifier ?? "Object",
-                confidence: obs.labels.first?.confidence ?? 0
-            )
-        }
-
-        DispatchQueue.main.async {
-            self.boxes = newBoxes
         }
     }
 }
@@ -163,15 +130,6 @@ extension CameraViewModel: AVCaptureVideoDataOutputSampleBufferDelegate {
     func captureOutput(_ output: AVCaptureOutput,
                        didOutput sampleBuffer: CMSampleBuffer,
                        from connection: AVCaptureConnection) {
-
-        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-
-        let handler = VNImageRequestHandler(
-            cvPixelBuffer: pixelBuffer,
-            orientation: .right,
-            options: [:]
-        )
-
-        try? handler.perform(self.visionRequests)
+        streamingService.sendFrame(sampleBuffer)
     }
 }
