@@ -23,18 +23,34 @@ final class VisionStreamingService: NSObject, ObservableObject {
     // Cap at 15 fps — keeps bandwidth and server load reasonable
     private let minFrameInterval: TimeInterval = 1.0 / 15.0
 
-    /// Connect to the ml-vision streaming WebSocket.
-    /// - Parameters:
-    ///   - baseURL: e.g. "ws://192.168.x.x:8000"
-    ///   - facilityId: facility identifier used to select the ONNX model on the server
-    func connect(baseURL: String, facilityId: String) {
-        guard webSocketTask == nil,
-              let url = URL(string: "\(baseURL)/ws/stream/\(facilityId)") else { return }
+
+    func connect(baseURL: String, facilityId: String, apiKey: String) {
+        guard webSocketTask == nil else { return }
+        let wsBase = Self.toWebSocketURL(baseURL)
+        let encodedFacility = facilityId
+            .addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? facilityId
+        guard let url = URL(string: "\(wsBase)/api/v1/ml-vision/ws/stream/\(encodedFacility)") else {
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.setValue(apiKey, forHTTPHeaderField: "X-Api-Key")
+
         let config = URLSessionConfiguration.default
         urlSession = URLSession(configuration: config, delegate: self, delegateQueue: nil)
-        webSocketTask = urlSession?.webSocketTask(with: url)
+        webSocketTask = urlSession?.webSocketTask(with: request)
         webSocketTask?.resume()
         receiveNext()
+    }
+
+    private static func toWebSocketURL(_ base: String) -> String {
+        if base.hasPrefix("https://") {
+            return "wss://" + base.dropFirst("https://".count)
+        }
+        if base.hasPrefix("http://") {
+            return "ws://" + base.dropFirst("http://".count)
+        }
+        return base
     }
 
     func disconnect() {

@@ -14,6 +14,7 @@ struct ProfileView: View {
     @State private var avoidStairs: Bool = true
     @State private var voiceGuidance: Bool = false
     @State private var elevatorsOnly: Bool = false
+    @State private var showRoomPhotoUpload: Bool = false
 
     var body: some View {
         ScrollView {
@@ -93,6 +94,24 @@ struct ProfileView: View {
                 .background(.white, in: RoundedRectangle(cornerRadius: 20))
                 .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.slate100))
 
+                Button {
+                    showRoomPhotoUpload = true
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "camera.on.rectangle")
+                            .font(.system(size: 16, weight: .semibold))
+                        Text("Upload Room Photos")
+                            .font(.system(size: 15, weight: .semibold))
+                    }
+                    .foregroundStyle(Color.blue500)
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(.white, in: RoundedRectangle(cornerRadius: 16))
+                    .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.blue500.opacity(0.2)))
+                    .shadow(color: .black.opacity(0.04), radius: 8, x: 0, y: 4)
+                }
+                .padding(.top, 6)
+
                 Button(role: .destructive) { /* logout */ } label: {
                     Text("Log Out")
                         .font(.system(size: 15, weight: .semibold))
@@ -103,11 +122,13 @@ struct ProfileView: View {
                         .overlay(RoundedRectangle(cornerRadius: 16).stroke(.red.opacity(0.15)))
                         .shadow(color: .black.opacity(0.04), radius: 8, x: 0, y: 4)
                 }
-                .padding(.top, 6)
             }
             .padding(.horizontal, 16)
         }
         .background(Color.slate50)
+        .sheet(isPresented: $showRoomPhotoUpload) {
+            RoomPhotoUploadView()
+        }
     }
 
     private func initials(from name: String) -> String {

@@ -64,9 +64,11 @@ final class CameraViewModel: NSObject, ObservableObject {
             guard self.configured, !self.session.isRunning else { return }
             self.session.startRunning()
         }
-        // AppSecrets.mlVisionURL  — "ws://<YOUR_PC_IP>:8000"
-        // AppSecrets.facilityId   — e.g. "example_facility_id"
-        streamingService.connect(baseURL: AppSecrets.mlVisionURL, facilityId: AppSecrets.facilityId)
+        streamingService.connect(
+            baseURL: AppSecrets.backendURL,
+            facilityId: AppSecrets.facilityId,
+            apiKey: AppSecrets.apiSecret
+        )
     }
 
     func stop() {
