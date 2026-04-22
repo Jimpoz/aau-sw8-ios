@@ -46,14 +46,18 @@ struct FloorPlanView: View {
     @StateObject private var vm          = FloorPlanViewModel()
     @StateObject private var floorService = FloorPlanService()
     @StateObject private var mapProxy    = MapActionProxy()
+    @StateObject private var assistant   = AssistantService()
+    @StateObject private var locationManager = LocationManager()
 
     @State private var searchText        = ""
     @State private var userLocation: CLLocationCoordinate2D?
     @State private var locationAccuracy: Double?
-    @State private var locationManager  = CLLocationManager()
     @State private var showFloorOverlay  = false
     @State private var currentBuildingId: String?
     @State private var routeDestination: RouteDestination?
+    @State private var isAskingForDirections = false
+    @State private var directionsPrompt = ""
+    @State private var isResolvingRoute = false
 
     var body: some View {
         ZStack {
@@ -130,9 +134,27 @@ struct FloorPlanView: View {
 
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 8) {
-                HStack {
-                    Spacer() // Pushes everything after it to the right
-                    
+                HStack(spacing: 10) {
+                    Button {
+                        directionsPrompt = ""
+                        isAskingForDirections = true
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "signpost.right.fill")
+                                .font(.system(size: 14, weight: .bold))
+                            Text("Directions")
+                                .font(.system(size: 13, weight: .semibold))
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .foregroundStyle(.white)
+                        .background(Color.blue, in: Capsule())
+                        .shadow(color: Color.blue.opacity(0.35), radius: 10, x: 0, y: 6)
+                    }
+                    .padding(.leading, 16)
+
+                    Spacer()
+
                     Button { mapProxy.centerOnUser() } label: {
                         Image(systemName: "location.fill")
                             .font(.system(size: 18, weight: .bold))
@@ -158,6 +180,13 @@ struct FloorPlanView: View {
         }
 
         .navigationTitle("Floor Plan")
+        .alert("Get directions", isPresented: $isAskingForDirections) {
+            TextField("e.g. A101, Cafeteria, Library", text: $directionsPrompt)
+            Button("Go") { askForDirections() }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Type where you want to go. The assistant will produce step-by-step directions from your current location.")
+        }
         .onAppear {
             setupFloorData()
             requestUserLocation()
@@ -165,6 +194,56 @@ struct FloorPlanView: View {
         .onChange(of: vm.selectedFloor) { _ in
             if showFloorOverlay, let buildingId = currentBuildingId {
                 loadBuildingFloorData(buildingId: buildingId)
+            }
+        }
+        .onReceive(locationManager.$lastLocation) { _ in syncFromLocationManager() }
+        .onReceive(locationManager.$horizontalAccuracyMeters) { _ in syncFromLocationManager() }
+    }
+
+    private func askForDirections() {
+        let dest = directionsPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !dest.isEmpty else { return }
+        searchText = dest
+        resolveRoute(to: dest)
+    }
+
+    private func resolveRoute(to destination: String) {
+        routeDestination = RouteDestination(title: destination, subtitle: "Calculating route…", steps: [])
+        isResolvingRoute = true
+
+        var context: [String: Any] = [:]
+        if let loc = userLocation {
+            context["x"] = loc.longitude
+            context["y"] = loc.latitude
+        }
+
+        Task {
+            do {
+                let answer = try await assistant.send(
+                    userText: "Give me step-by-step directions to \(destination) from my current location.",
+                    context: context
+                )
+                let steps = answer
+                    .split(whereSeparator: { "\n•".contains($0) })
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                    .filter { !$0.isEmpty }
+                await MainActor.run {
+                    routeDestination = RouteDestination(
+                        title: destination,
+                        subtitle: steps.isEmpty ? answer : "Route ready",
+                        steps: steps.isEmpty ? [answer] : steps
+                    )
+                    isResolvingRoute = false
+                }
+            } catch {
+                await MainActor.run {
+                    routeDestination = RouteDestination(
+                        title: destination,
+                        subtitle: "Could not compute route",
+                        steps: [error.localizedDescription]
+                    )
+                    isResolvingRoute = false
+                }
             }
         }
     }
@@ -182,26 +261,24 @@ struct FloorPlanView: View {
     }
 
     private func requestUserLocation() {
-        locationManager.requestWhenInUseAuthorization()
-        let status = locationManager.authorizationStatus
-        if status == .authorizedWhenInUse || status == .authorizedAlways {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                if let location = locationManager.location {
-                    self.userLocation       = location.coordinate
-                    self.locationAccuracy   = location.horizontalAccuracy
-                }
-            }
+        locationManager.requestPermission()
+        if let location = locationManager.lastLocation {
+            userLocation = location.coordinate
+            locationAccuracy = location.horizontalAccuracy
         }
+    }
+
+    private func syncFromLocationManager() {
+        if let loc = locationManager.lastLocation {
+            userLocation = loc.coordinate
+        }
+        locationAccuracy = locationManager.horizontalAccuracyMeters
     }
 
     private func handleSearch(_ query: String) {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return }
-        routeDestination = RouteDestination(
-            title: q,
-            subtitle: "Calculating route…",
-            steps: []
-        )
+        resolveRoute(to: q)
     }
 
 

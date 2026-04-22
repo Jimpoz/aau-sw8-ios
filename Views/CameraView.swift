@@ -10,11 +10,17 @@ import AVFoundation
 
 struct CameraView: View {
     @StateObject private var vm = CameraViewModel()
-        
+
+    @State private var showDirections: Bool = false
+    @State private var destinationQuery: String = ""
+    @State private var directionText: String? = nil
+    @State private var directionDistance: String? = nil
+    @State private var isAskingDirections: Bool = false
+
     private var isPreview: Bool {
         ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1"
     }
-    
+
     var body: some View {
             ZStack {
                 if isPreview {
@@ -28,17 +34,17 @@ struct CameraView: View {
                 GeometryReader { geo in
                     ForEach(0..<vm.boxes.count, id: \.self) { index in
                         let box = vm.boxes[index]
-                        
+
                         let x = box.rect.minX * geo.size.width
                         let width = box.rect.width * geo.size.width
                         let height = box.rect.height * geo.size.height
                         let y = (1.0 - box.rect.minY - box.rect.height) * geo.size.height
-                        
+
                         ZStack(alignment: .topLeading) {
                             Rectangle()
                                 .stroke(Color.green, lineWidth: 3)
                                 .frame(width: width, height: height)
-                            
+
                             Text("\(box.label) (\(Int(box.confidence * 100))%)")
                                 .font(.caption)
                                 .fontWeight(.bold)
@@ -52,18 +58,31 @@ struct CameraView: View {
                 .ignoresSafeArea()
 
                 VStack {
-                    DirectionCard()
+                    if showDirections, let text = directionText {
+                        DirectionCard(distance: directionDistance, text: text) {
+                            showDirections = false
+                        }
                         .padding(.top, 16)
                         .padding(.horizontal, 16)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
                     Spacer()
                     HStack {
-                        Text("Accuracy: High (GPS + WiFi)")
-                            .font(.system(size: 11, weight: .medium))
+                        Button {
+                            isAskingDirections = true
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "location.north.line.fill")
+                                    .font(.system(size: 12, weight: .bold))
+                                Text(showDirections ? "Change Directions" : "Ask for Directions")
+                                    .font(.system(size: 12, weight: .semibold))
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
                             .foregroundStyle(.white)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(.black.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
-                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(.white.opacity(0.1)))
+                            .background(.black.opacity(0.6), in: Capsule())
+                            .overlay(Capsule().stroke(.white.opacity(0.12)))
+                        }
                         Spacer()
                     }
                     .padding(.horizontal, 16)
@@ -79,6 +98,13 @@ struct CameraView: View {
                     )
                 }
             }
+            .alert("Where to?", isPresented: $isAskingDirections) {
+                TextField("e.g. A101 or Cafeteria", text: $destinationQuery)
+                Button("Get Directions") { requestDirections() }
+                Button("Cancel", role: .cancel) { }
+            } message: {
+                Text("Type a destination. The assistant will guide you from your current location.")
+            }
             .onAppear {
                 if !isPreview { vm.configureAndMaybeStart() }
             }
@@ -86,7 +112,15 @@ struct CameraView: View {
                 if !isPreview { vm.stop() }
             }
         }
-        
+
+    private func requestDirections() {
+        let q = destinationQuery.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return }
+        directionDistance = nil
+        directionText = "Routing to \(q)…"
+        withAnimation { showDirections = true }
+    }
+
 }
 
 struct CameraPreview: UIViewRepresentable {
@@ -120,9 +154,11 @@ struct CameraPreview: UIViewRepresentable {
 }
 
 private struct DirectionCard: View {
+    let distance: String?
+    let text: String
+    let onDismiss: () -> Void
+
     var body: some View {
-        
-        // Mock data for demo purposes
         HStack(alignment: .top, spacing: 12) {
             RoundedRectangle(cornerRadius: 14)
                 .fill(Color.blue)
@@ -134,16 +170,24 @@ private struct DirectionCard: View {
                 )
 
             VStack(alignment: .leading, spacing: 4) {
-                // Get the distance information based on the user location to the next POI
-                Text("20 meters")
-                    .font(.system(size: 22, weight: .bold))
-                    .foregroundStyle(.white)
-                // Make the llm generate the text
-                Text("Walk straight towards the fountain, then turn right.")
+                if let distance {
+                    Text(distance)
+                        .font(.system(size: 22, weight: .bold))
+                        .foregroundStyle(.white)
+                }
+                Text(text)
                     .font(.system(size: 13))
                     .foregroundStyle(.white.opacity(0.85))
             }
             Spacer(minLength: 0)
+
+            Button {
+                onDismiss()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 18))
+                    .foregroundStyle(.white.opacity(0.7))
+            }
         }
         .padding(14)
         .background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 20))

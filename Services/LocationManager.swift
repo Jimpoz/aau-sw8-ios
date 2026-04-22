@@ -16,34 +16,39 @@ final class LocationManager: NSObject, ObservableObject, CLLocationManagerDelega
     @Published var authorizationStatus: CLAuthorizationStatus = .notDetermined
     @Published var lastLocation: CLLocation?
     @Published var isUpdating: Bool = false
+    @Published var horizontalAccuracyMeters: Double? = nil
+    @Published var isOnWifi: Bool = false
 
     enum LocalizationMode: String {
         case gps
         case gpsWifi
-        case cameraLiDAR
-        case cameraNoLiDAR
     }
 
     @Published var localizationMode: LocalizationMode = .gps
 
     var localizationModeLabel: String {
         switch localizationMode {
-        case .gps: return "GPS" // still not available due to only it being an online service for now
+        case .gps: return "GPS"
         case .gpsWifi: return "GPS + Wi‑Fi"
-        case .cameraLiDAR: return "GPS + Wi‑Fi + Camera (No LiDAR)" // to implement
-        case .cameraNoLiDAR: return "GPS + Wi‑Fi + Camera (LiDAR)" // to implement
         }
     }
 
+    // Max tolerance, otherwise it would just be as precise as the GPS
+    private var maxAcceptableAgeSeconds: TimeInterval = 8
+    private var maxAcceptableHorizontalAccuracyMeters: Double = 65
+
     private let pathMonitor = NWPathMonitor()
     private let pathMonitorQueue = DispatchQueue(label: "wifi.path.monitor")
-    private var didUpgradeToWifiAccuracy = false
-    
+
     override init() {
         super.init()
         manager.delegate = self
-        manager.desiredAccuracy = kCLLocationAccuracyBest
-        manager.distanceFilter = 1 // meters
+        // Indoor pedestrian navigation — hints the system to prioritise Wi‑Fi/GPS
+        // fusion over dead-reckoning, and keeps the indoor positioning pipeline warm.
+        manager.activityType = .otherNavigation
+        manager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
+        manager.distanceFilter = kCLDistanceFilterNone
+        manager.pausesLocationUpdatesAutomatically = false
         authorizationStatus = manager.authorizationStatus
         startLocationIfAuthorized()
         startWifiMonitoring()
@@ -67,14 +72,24 @@ final class LocationManager: NSObject, ObservableObject, CLLocationManagerDelega
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard let loc = locations.last else { return }
-        lastLocation = loc
-    }
+        // Pick the best sample in the batch
+        let now = Date()
+        let fresh = locations.filter { now.timeIntervalSince($0.timestamp) <= maxAcceptableAgeSeconds }
+        let accurate = fresh.filter { $0.horizontalAccuracy > 0 && $0.horizontalAccuracy <= maxAcceptableHorizontalAccuracyMeters }
+        guard let best = (accurate.min(by: { $0.horizontalAccuracy < $1.horizontalAccuracy })
+                          ?? fresh.last
+                          ?? locations.last) else { return }
 
-    func applyPreciseLocationFromCamera(_ location: CLLocation) {
-        // Treat this as the best available location source.
-        lastLocation = location
-        localizationMode = .cameraLiDAR
+        // Keep only the best sample
+        if let previous = lastLocation,
+           now.timeIntervalSince(previous.timestamp) < 5,
+           best.horizontalAccuracy > previous.horizontalAccuracy * 2.5,
+           best.horizontalAccuracy > 30 {
+            return
+        }
+
+        lastLocation = best
+        horizontalAccuracyMeters = best.horizontalAccuracy
     }
 
     private func startLocationIfAuthorized() {
@@ -87,35 +102,35 @@ final class LocationManager: NSObject, ObservableObject, CLLocationManagerDelega
     private func startWifiMonitoring() {
         pathMonitor.pathUpdateHandler = { [weak self] path in
             guard let self else { return }
-
-            // This is a best-effort connectivity signal. CoreLocation still performs its own sensor fusion;
-            // we use this flag to "upgrade" our CLLocation accuracy profile once Wi‑Fi is actually being used.
-            let isOnWifi = path.status == .satisfied && path.usesInterfaceType(.wifi)
-
-            // GPS-first: upgrade once, and never downgrade automatically.
-            guard isOnWifi, !self.didUpgradeToWifiAccuracy else { return }
-            self.didUpgradeToWifiAccuracy = true
-
+            let nowOnWifi = path.status == .satisfied && path.usesInterfaceType(.wifi)
             DispatchQueue.main.async {
-                // Preserve the explicit camera-based mode if the user has switched to it.
-                if self.localizationMode != .cameraLiDAR {
-                    self.localizationMode = .gpsWifi
-                }
-                self.upgradeToGpsWifiAccuracy()
+                let changed = self.isOnWifi != nowOnWifi
+                self.isOnWifi = nowOnWifi
+                if changed { self.applyWifiAwareAccuracyProfile(onWifi: nowOnWifi) }
             }
         }
-
         pathMonitor.start(queue: pathMonitorQueue)
     }
 
-    private func upgradeToGpsWifiAccuracy() {
-        // Higher-effort accuracy profile for navigation improves the odds that Wi‑Fi contributes.
-        // (CoreLocation manages the actual fusion; we just request a better accuracy mode.)
-        manager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
-        // Restart to ensure the new accuracy profile is applied promptly.
-        manager.stopUpdatingLocation()
-        manager.startUpdatingLocation()
-        isUpdating = true
+    private func applyWifiAwareAccuracyProfile(onWifi: Bool) {
+        if onWifi {
+            manager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
+            manager.distanceFilter = kCLDistanceFilterNone
+            maxAcceptableHorizontalAccuracyMeters = 25
+            maxAcceptableAgeSeconds = 5
+            localizationMode = .gpsWifi
+        } else {
+            manager.desiredAccuracy = kCLLocationAccuracyBest
+            manager.distanceFilter = 2
+            maxAcceptableHorizontalAccuracyMeters = 65
+            maxAcceptableAgeSeconds = 8
+            if localizationMode == .gpsWifi { localizationMode = .gps }
+        }
+        if authorizationStatus == .authorizedWhenInUse || authorizationStatus == .authorizedAlways {
+            manager.stopUpdatingLocation()
+            manager.startUpdatingLocation()
+            isUpdating = true
+        }
     }
 
     deinit {

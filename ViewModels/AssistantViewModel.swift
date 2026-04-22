@@ -11,7 +11,6 @@ import Combine
 import SwiftUI
 import Speech
 import AVFoundation
-internal import _LocationEssentials
 
 struct ChatItem: Identifiable {
     enum Role { case user, assistant }
@@ -57,7 +56,7 @@ final class AssistantViewModel: ObservableObject {
     @Published var speechPermissionDenied: Bool = false
 
     private var llmService: LLMChatting?
-    private var locationTrackingService: LocationTrackingService?
+    private var locationManager: LocationManager?
     private var cancellables = Set<AnyCancellable>()
 
     private let audioEngine = AVAudioEngine()
@@ -68,15 +67,15 @@ final class AssistantViewModel: ObservableObject {
     }()
     private var tapInstalled = false
 
-    init(llmService: LLMChatting? = nil, locationTrackingService: LocationTrackingService? = nil) {
+    init(llmService: LLMChatting? = nil, locationManager: LocationManager? = nil) {
         self.llmService = llmService
-        self.locationTrackingService = locationTrackingService
+        self.locationManager = locationManager
         addWelcomeMessage()
     }
 
     func configure(with container: DIContainer) {
         self.llmService = container.llm
-        self.locationTrackingService = container.locationTrackingService
+        self.locationManager = container.locationManager
         checkConnection()
     }
 
@@ -217,9 +216,9 @@ final class AssistantViewModel: ObservableObject {
         error = nil
         
         var context: [String: Any] = [:]
-        if let location = locationTrackingService?.currentLocation {
-            context["x"] = location.longitude
-            context["y"] = location.latitude
+        if let coord = locationManager?.lastLocation?.coordinate {
+            context["x"] = coord.longitude
+            context["y"] = coord.latitude
         }
         
         Task {

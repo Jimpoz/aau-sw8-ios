@@ -19,7 +19,11 @@ struct RoomPhotoUploadView: View {
     @State private var useManualRoom: Bool = false
 
     @State private var images: [RoomSummaryService.CompassDirection: UIImage] = [:]
+
+    @State private var pendingDirection: RoomSummaryService.CompassDirection? = nil
+    @State private var showingSourceDialog = false
     @State private var pickingDirection: RoomSummaryService.CompassDirection? = nil
+    @State private var cameraDirection: RoomSummaryService.CompassDirection? = nil
     @State private var pickerItem: PhotosPickerItem? = nil
 
     @State private var isLoadingRooms = false
@@ -67,6 +71,26 @@ struct RoomPhotoUploadView: View {
                 }
             }
             .task { await loadRooms() }
+            .confirmationDialog(
+                pendingDirection.map { "Add \($0.label) photo" } ?? "Add photo",
+                isPresented: $showingSourceDialog,
+                titleVisibility: .visible
+            ) {
+                Button("Take Photo") {
+                    if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                        cameraDirection = pendingDirection
+                    } else {
+                        errorText = "Camera is not available on this device."
+                    }
+                    pendingDirection = nil
+                }
+                Button("Choose from Library") {
+                    pickerItem = nil
+                    pickingDirection = pendingDirection
+                    pendingDirection = nil
+                }
+                Button("Cancel", role: .cancel) { pendingDirection = nil }
+            }
             .photosPicker(
                 isPresented: Binding(
                     get: { pickingDirection != nil },
@@ -77,6 +101,20 @@ struct RoomPhotoUploadView: View {
             )
             .onChange(of: pickerItem) { _, newItem in
                 Task { await handlePickerChange(newItem) }
+            }
+            .sheet(
+                isPresented: Binding(
+                    get: { cameraDirection != nil },
+                    set: { if !$0 { cameraDirection = nil } }
+                )
+            ) {
+                if let dir = cameraDirection {
+                    CameraImagePicker { image in
+                        if let image { images[dir] = image }
+                        cameraDirection = nil
+                    }
+                    .ignoresSafeArea()
+                }
             }
         }
     }
@@ -154,8 +192,8 @@ struct RoomPhotoUploadView: View {
 
     private func imageTile(for dir: RoomSummaryService.CompassDirection) -> some View {
         Button {
-            pickerItem = nil
-            pickingDirection = dir
+            pendingDirection = dir
+            showingSourceDialog = true
         } label: {
             VStack(spacing: 6) {
                 ZStack {
@@ -262,3 +300,37 @@ struct RoomPhotoUploadView: View {
 }
 
 #Preview("RoomPhotoUpload") { RoomPhotoUploadView() }
+
+struct CameraImagePicker: UIViewControllerRepresentable {
+    let onResult: (UIImage?) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(onResult: onResult) }
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.cameraDevice = .rear
+        picker.allowsEditing = false
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ controller: UIImagePickerController, context: Context) {}
+
+    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let onResult: (UIImage?) -> Void
+        init(onResult: @escaping (UIImage?) -> Void) { self.onResult = onResult }
+
+        func imagePickerController(_ picker: UIImagePickerController,
+                                   didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            let image = (info[.originalImage] as? UIImage)
+            onResult(image)
+            picker.dismiss(animated: true)
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            onResult(nil)
+            picker.dismiss(animated: true)
+        }
+    }
+}
