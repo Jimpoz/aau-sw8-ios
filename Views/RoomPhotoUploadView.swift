@@ -100,7 +100,8 @@ struct RoomPhotoUploadView: View {
                 matching: .images
             )
             .onChange(of: pickerItem) { _, newItem in
-                Task { await handlePickerChange(newItem) }
+                guard let dir = pickingDirection else { return }
+                Task { await handlePickerChange(newItem, direction: dir) }
             }
             .sheet(
                 isPresented: Binding(
@@ -264,8 +265,11 @@ struct RoomPhotoUploadView: View {
         }
     }
 
-    private func handlePickerChange(_ item: PhotosPickerItem?) async {
-        guard let item, let dir = pickingDirection else { return }
+    private func handlePickerChange(
+        _ item: PhotosPickerItem?,
+        direction dir: RoomSummaryService.CompassDirection
+    ) async {
+        guard let item else { return }
         do {
             if let data = try await item.loadTransferable(type: Data.self),
                let ui = UIImage(data: data) {
@@ -325,12 +329,10 @@ struct CameraImagePicker: UIViewControllerRepresentable {
                                    didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
             let image = (info[.originalImage] as? UIImage)
             onResult(image)
-            picker.dismiss(animated: true)
         }
 
         func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
             onResult(nil)
-            picker.dismiss(animated: true)
         }
     }
 }
