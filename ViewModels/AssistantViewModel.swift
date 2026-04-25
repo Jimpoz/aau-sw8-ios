@@ -11,6 +11,7 @@ import Combine
 import SwiftUI
 import Speech
 import AVFoundation
+internal import _LocationEssentials
 
 struct ChatItem: Identifiable {
     enum Role { case user, assistant }

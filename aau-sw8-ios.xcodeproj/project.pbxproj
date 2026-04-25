@@ -63,7 +63,7 @@
 		5F666CF52F4494A50028589E = {
 			isa = PBXGroup;
 			children = (
-					5FE1FAD52F4DED230048ECCF /* .gitignore */,
+				5FE1FAD52F4DED230048ECCF /* .gitignore */,
 				5F666D2D2F469D120028589E /* aau-sw8-ios-Info.plist */,
 				5F666D112F44970C0028589E /* Utilities */,
 				5F666D102F4496FC0028589E /* Views */,

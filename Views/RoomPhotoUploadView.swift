@@ -23,6 +23,7 @@ struct RoomPhotoUploadView: View {
     @State private var pendingDirection: RoomSummaryService.CompassDirection? = nil
     @State private var showingSourceDialog = false
     @State private var pickingDirection: RoomSummaryService.CompassDirection? = nil
+    @State private var isPickerPresented = false
     @State private var cameraDirection: RoomSummaryService.CompassDirection? = nil
     @State private var pickerItem: PhotosPickerItem? = nil
 
@@ -87,15 +88,13 @@ struct RoomPhotoUploadView: View {
                 Button("Choose from Library") {
                     pickerItem = nil
                     pickingDirection = pendingDirection
+                    isPickerPresented = true
                     pendingDirection = nil
                 }
                 Button("Cancel", role: .cancel) { pendingDirection = nil }
             }
             .photosPicker(
-                isPresented: Binding(
-                    get: { pickingDirection != nil },
-                    set: { if !$0 { pickingDirection = nil } }
-                ),
+                isPresented: $isPickerPresented,
                 selection: $pickerItem,
                 matching: .images
             )

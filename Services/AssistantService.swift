@@ -9,7 +9,7 @@ import Foundation
 import Combine
 
 /// Service for communicating with the backend LLM + RAG assistant
-final class AssistantService: NSObject, LLMChatting {
+final class AssistantService: NSObject, ObservableObject, LLMChatting {
     private let backendURL: String
     private let campusId: String
     private let session: URLSession
