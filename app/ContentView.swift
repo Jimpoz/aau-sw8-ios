@@ -18,7 +18,7 @@ struct ContentView: View {
     var body: some View {
         ZStack {
             TabView(selection: $selected) {
-                FloorPlanView()
+                MapTabView()
                     .tag(AppTab.floorPlan)
                     .tabItem { Label("Map", systemImage: "map") }
 
@@ -26,13 +26,11 @@ struct ContentView: View {
                     .tag(AppTab.assistant)
                     .tabItem { Label("Assistant", systemImage: "bubble.left.and.bubble.right") }
 
-                CameraView()
+                CameraEntryView()
                     .tag(AppTab.camera)
                     .tabItem {
                         Label("Camera", systemImage: "camera")
                     }
-                    .toolbarBackground(.visible, for: .tabBar)
-                    .toolbarBackground(Color.black.opacity(0.8), for: .tabBar)
 
                 ExploreView()
                     .tag(AppTab.explore)
