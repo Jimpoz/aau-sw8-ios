@@ -12,10 +12,26 @@ enum AppTab: Hashable {
 }
 
 struct ContentView: View {
+    @EnvironmentObject private var authService: AuthService
     @State private var selected: AppTab = .floorPlan
     @State private var showCameraPulse = false
 
     var body: some View {
+        Group {
+            if !authService.didProbe {
+                ZStack {
+                    Color.slate50.ignoresSafeArea()
+                    ProgressView()
+                }
+            } else if authService.enforcementOn && !authService.isAuthenticated {
+                LoginView()
+            } else {
+                mainTabs
+            }
+        }
+    }
+
+    private var mainTabs: some View {
         ZStack {
             TabView(selection: $selected) {
                 MapTabView()

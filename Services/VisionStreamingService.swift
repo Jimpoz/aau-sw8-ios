@@ -35,6 +35,7 @@ final class VisionStreamingService: NSObject, ObservableObject {
 
         var request = URLRequest(url: url)
         request.setValue(apiKey, forHTTPHeaderField: "X-Api-Key")
+        request.attachBearer()
 
         let config = URLSessionConfiguration.default
         urlSession = URLSession(configuration: config, delegate: self, delegateQueue: nil)

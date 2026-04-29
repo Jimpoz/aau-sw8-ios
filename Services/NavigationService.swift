@@ -46,6 +46,7 @@ class NavigationService: ObservableObject {
 
         var navRequest = URLRequest(url: url)
         navRequest.setValue(AppSecrets.apiSecret, forHTTPHeaderField: "X-Api-Key")
+        navRequest.attachBearer()
 
         do {
             let (data, response) = try await session.data(for: navRequest)
@@ -89,6 +90,7 @@ class NavigationService: ObservableObject {
 
         var vizRequest = URLRequest(url: url)
         vizRequest.setValue(AppSecrets.apiSecret, forHTTPHeaderField: "X-Api-Key")
+        vizRequest.attachBearer()
 
         do {
             let (data, response) = try await session.data(for: vizRequest)

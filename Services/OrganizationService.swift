@@ -99,6 +99,7 @@ final class OrganizationService: ObservableObject {
         var request = URLRequest(url: baseURL.appendingPathComponent(path))
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(AppSecrets.apiSecret, forHTTPHeaderField: "X-Api-Key")
+        request.attachBearer()
 
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {

@@ -11,6 +11,7 @@ import SwiftUI
 struct aau_sw8_iosApp: App {
     @StateObject private var container = DIContainer()
     @StateObject private var themeSettings = ThemeSettings()
+    @StateObject private var authService = AuthService()
 
     init() {
         // Darker grey icons + labels in the TabBar (unselected).
@@ -41,8 +42,10 @@ struct aau_sw8_iosApp: App {
             ContentView()
                 .environmentObject(container)
                 .environmentObject(themeSettings)
+                .environmentObject(authService)
                 .preferredColorScheme(themeSettings.isDarkMode ? .dark : .light)
                 .tint(.blue600)
+                .task { await authService.probe() }
         }
     }
 }

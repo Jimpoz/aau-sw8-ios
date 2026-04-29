@@ -33,6 +33,7 @@ class FloorPlanService: ObservableObject {
         var request = URLRequest(url: baseURL.appendingPathComponent("floors/\(floorId)/display"))
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(AppSecrets.apiSecret, forHTTPHeaderField: "X-Api-Key")
+        request.attachBearer()
 
         do {
             let (data, response) = try await session.data(for: request)
@@ -63,6 +64,7 @@ class FloorPlanService: ObservableObject {
 
         var floorRequest = URLRequest(url: url)
         floorRequest.setValue(AppSecrets.apiSecret, forHTTPHeaderField: "X-Api-Key")
+        floorRequest.attachBearer()
 
         do {
             let (data, response) = try await session.data(for: floorRequest)

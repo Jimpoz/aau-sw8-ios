@@ -69,6 +69,7 @@ final class RoomSummaryService {
         }
         var request = URLRequest(url: url)
         request.setValue(AppSecrets.apiSecret, forHTTPHeaderField: "X-Api-Key")
+        request.attachBearer()
 
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw ServiceError.invalidResponse }
@@ -97,6 +98,7 @@ final class RoomSummaryService {
         request.httpMethod = "POST"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         request.setValue(AppSecrets.apiSecret, forHTTPHeaderField: "X-Api-Key")
+        request.attachBearer()
 
         var body = Data()
         func append(_ s: String) { body.append(s.data(using: .utf8)!) }

@@ -95,6 +95,7 @@ final class AssistantService: NSObject, ObservableObject, LLMChatting {
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.setValue(AppSecrets.apiSecret, forHTTPHeaderField: "X-Api-Key")
+        urlRequest.attachBearer()
         urlRequest.httpBody = requestBody
         urlRequest.timeoutInterval = 30
         
@@ -125,6 +126,7 @@ final class AssistantService: NSObject, ObservableObject, LLMChatting {
         guard let url = URL(string: "\(backendURL)/health") else { return false }
         var request = URLRequest(url: url)
         request.setValue(AppSecrets.apiSecret, forHTTPHeaderField: "X-Api-Key")
+        request.attachBearer()
         request.timeoutInterval = 8
         do {
             let (_, response) = try await session.data(for: request)
@@ -144,6 +146,7 @@ final class AssistantService: NSObject, ObservableObject, LLMChatting {
 
         var spaceTypesRequest = URLRequest(url: url)
         spaceTypesRequest.setValue(AppSecrets.apiSecret, forHTTPHeaderField: "X-Api-Key")
+        spaceTypesRequest.attachBearer()
         let (data, response) = try await session.data(for: spaceTypesRequest)
         
         guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {

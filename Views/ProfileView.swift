@@ -9,12 +9,25 @@ import SwiftUI
 
 struct ProfileView: View {
     @EnvironmentObject private var themeSettings: ThemeSettings
-    @State private var displayName: String = "John Doe"
-    @State private var goldMember: Bool = true
+    @EnvironmentObject private var authService: AuthService
     @State private var avoidStairs: Bool = true
     @State private var voiceGuidance: Bool = false
     @State private var elevatorsOnly: Bool = false
     @State private var showRoomPhotoUpload: Bool = false
+
+    private var displayName: String {
+        authService.principal?.fullName?.isEmpty == false
+            ? (authService.principal?.fullName ?? "")
+            : (authService.principal?.email ?? "Guest")
+    }
+
+    private var subtitle: String {
+        guard let p = authService.principal else { return "Not signed in" }
+        if let role = p.role, let org = p.organizationId {
+            return "\(role.capitalized) · \(org)"
+        }
+        return p.email
+    }
 
     var body: some View {
         ScrollView {
@@ -31,7 +44,7 @@ struct ProfileView: View {
                     }
                     VStack(alignment: .leading, spacing: 4) {
                         Text(displayName).font(.system(size: 20, weight: .bold)).foregroundStyle(Color.slate900)
-                        Text(goldMember ? "Gold Member" : "Member")
+                        Text(subtitle)
                             .font(.system(size: 13, weight: .medium))
                             .foregroundStyle(Color.slate500)
                     }
@@ -112,7 +125,7 @@ struct ProfileView: View {
                 }
                 .padding(.top, 6)
 
-                Button(role: .destructive) { /* logout */ } label: {
+                Button(role: .destructive) { authService.logout() } label: {
                     Text("Log Out")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(.red)
