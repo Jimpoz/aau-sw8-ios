@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import CoreImage.CIFilterBuiltins
 
 struct ProfileView: View {
     @EnvironmentObject private var themeSettings: ThemeSettings
@@ -386,27 +387,27 @@ private struct MfaEnrollmentSheet: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Step 1 — Add to your authenticator")
                 .font(.system(size: 14, weight: .bold))
-            Text("Open Google Authenticator, 1Password, or Authy and add a new account. Either scan the QR (paste the URI into a QR generator) or enter the secret by hand.")
+            Text("Open Google Authenticator, 1Password, or Authy and either scan the QR code below or type the secret in by hand.")
                 .font(.system(size: 13))
                 .foregroundStyle(Color.slate500)
 
+            HStack {
+                Spacer()
+                QRCodeView(text: e.provisioningURI)
+                    .frame(width: 220, height: 220)
+                    .padding(12)
+                    .background(.white, in: RoundedRectangle(cornerRadius: 12))
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.slate100))
+                Spacer()
+            }
+
             VStack(alignment: .leading, spacing: 6) {
-                Text("Secret").font(.system(size: 11, weight: .black)).foregroundStyle(Color.slate400)
+                Text("Or enter the secret manually")
+                    .font(.system(size: 11, weight: .black))
+                    .foregroundStyle(Color.slate400)
                 Text(e.secret)
                     .font(.system(size: 15, weight: .semibold, design: .monospaced))
                     .textSelection(.enabled)
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.slate50, in: RoundedRectangle(cornerRadius: 10))
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("otpauth URI").font(.system(size: 11, weight: .black)).foregroundStyle(Color.slate400)
-                Text(e.provisioningURI)
-                    .font(.system(size: 11, design: .monospaced))
-                    .textSelection(.enabled)
-                    .lineLimit(3)
-                    .truncationMode(.middle)
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -842,6 +843,39 @@ private struct PasswordRecoverySheet: View {
         } catch {
             errorText = (error as? LocalizedError)?.errorDescription ?? "Invalid or expired code"
         }
+    }
+}
+
+private struct QRCodeView: View {
+    let text: String
+
+    var body: some View {
+        if let image = Self.render(text: text) {
+            Image(uiImage: image)
+                .interpolation(.none)
+                .resizable()
+                .scaledToFit()
+                .accessibilityLabel("QR code for authenticator setup")
+        } else {
+            Text(text)
+                .font(.system(size: 11, design: .monospaced))
+                .textSelection(.enabled)
+                .lineLimit(4)
+                .truncationMode(.middle)
+        }
+    }
+
+    private static func render(text: String) -> UIImage? {
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(text.utf8)
+        filter.correctionLevel = "M"
+        guard let output = filter.outputImage else { return nil }
+        let scaled = output.transformed(by: CGAffineTransform(scaleX: 10, y: 10))
+        let context = CIContext()
+        guard let cg = context.createCGImage(scaled, from: scaled.extent) else {
+            return nil
+        }
+        return UIImage(cgImage: cg)
     }
 }
 
