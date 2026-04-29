@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Combine
 
 struct OrganizationDTO: Identifiable, Codable, Hashable {
     let id: String

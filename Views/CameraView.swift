@@ -3,7 +3,7 @@
 //  aau-sw8-ios
 //
 //  Created by jimpo on 17/02/26.
-//  TO FIX
+//
 
 import SwiftUI
 import AVFoundation
