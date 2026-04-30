@@ -81,9 +81,16 @@ struct FloorPlanView: View {
                     buildings: floorService.buildings,
                     actionProxy: mapProxy,
                     onBuildingZoom: { buildingId in
+                        let changedBuilding = (buildingId != self.currentBuildingId)
                         self.currentBuildingId = buildingId
                         self.showFloorOverlay  = true
-                        if let buildingId { loadBuildingFloorData(buildingId: buildingId) }
+                        if let buildingId {
+                            if changedBuilding {
+                                loadFloorsAndOverlay(buildingId: buildingId)
+                            } else {
+                                loadBuildingFloorData(buildingId: buildingId)
+                            }
+                        }
                     },
                     onZoomOut: {
                         self.showFloorOverlay  = false
@@ -293,9 +300,37 @@ struct FloorPlanView: View {
         }
     }
 
+    private func loadFloorsAndOverlay(buildingId: String) {
+        Task {
+            let summaries = await floorService.fetchFloorList(buildingId: buildingId)
+            await MainActor.run {
+                vm.availableFloors = summaries.map { $0.floorIndex }
+                vm.availableFloorLabels = summaries.map { floorLabel(for: $0) }
+                if !summaries.isEmpty {
+                    let groundIndex = summaries.firstIndex { $0.floorIndex == 0 } ?? 0
+                    vm.selectedFloor = groundIndex
+                }
+            }
+            if let active = activeFloorId(in: summaries) {
+                await floorService.fetchFloorGeometry(floorId: active)
+            }
+        }
+    }
+
     private func loadBuildingFloorData(buildingId: String) {
-        let floorId = "\(buildingId)_floor_\(vm.selectedFloor)"
+        guard let floorId = activeFloorId(in: floorService.floors) else { return }
         Task { await floorService.fetchFloorGeometry(floorId: floorId) }
+    }
+
+    private func activeFloorId(in summaries: [FloorSummary]) -> String? {
+        guard !summaries.isEmpty else { return nil }
+        let idx = summaries.indices.contains(vm.selectedFloor) ? vm.selectedFloor : 0
+        return summaries[idx].id
+    }
+
+    private func floorLabel(for summary: FloorSummary) -> String {
+        if let name = summary.displayName, !name.isEmpty { return name }
+        return summary.floorIndex >= 0 ? "F\(summary.floorIndex)" : "B\(-summary.floorIndex)"
     }
 
     private func requestUserLocation() {

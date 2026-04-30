@@ -37,10 +37,17 @@ struct BuildingLocator: Identifiable, Hashable {
     static func == (a: BuildingLocator, b: BuildingLocator) -> Bool { a.id == b.id }
 }
 
+struct FloorSummary: Identifiable, Hashable {
+    let id: String
+    let floorIndex: Int
+    let displayName: String?
+}
+
 /// Service for fetching floor plan geometry and building data
 class FloorPlanService: ObservableObject {
     @Published var rooms: [Room] = []
     @Published var buildings: [BuildingLocator] = []
+    @Published var floors: [FloorSummary] = []
     @Published var isLoading = false
     @Published var error: String?
 
@@ -114,6 +121,33 @@ class FloorPlanService: ObservableObject {
         }
     }
 
+    @discardableResult
+    func fetchFloorList(buildingId: String) async -> [FloorSummary] {
+        var request = URLRequest(url: baseURL.appendingPathComponent("buildings/\(buildingId)/floors"))
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(AppSecrets.apiSecret, forHTTPHeaderField: "X-Api-Key")
+        request.attachBearer()
+
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                throw NSError(domain: "FloorPlanService", code: -1)
+            }
+            let items = try JSONDecoder().decode([FloorListItem].self, from: data)
+            let summaries = items
+                .sorted { $0.floor_index < $1.floor_index }
+                .map { FloorSummary(id: $0.id, floorIndex: $0.floor_index, displayName: $0.display_name) }
+            await MainActor.run { self.floors = summaries }
+            return summaries
+        } catch {
+            await MainActor.run {
+                self.error = "Failed to load floors: \(error.localizedDescription)"
+                self.floors = []
+            }
+            return []
+        }
+    }
+
     /// Fetch floor display data (spaces with polygon_global) for a specific floor
     func fetchFloorGeometry(floorId: String) async {
         DispatchQueue.main.async {
@@ -181,6 +215,12 @@ private struct BuildingLocatorItem: Decodable {
     let address: String?
     let origin_lat: Double?
     let origin_lng: Double?
+}
+
+private struct FloorListItem: Decodable {
+    let id: String
+    let floor_index: Int
+    let display_name: String?
 }
 
 private struct VisibleBuildingItem: Decodable {
