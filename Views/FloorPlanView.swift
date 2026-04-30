@@ -43,6 +43,12 @@ struct RouteDestination {
 }
 
 struct FloorPlanView: View {
+    let campusId: String?
+
+    init(campusId: String? = nil) {
+        self.campusId = campusId
+    }
+
     @StateObject private var vm          = FloorPlanViewModel()
     @StateObject private var floorService = FloorPlanService()
     @StateObject private var mapProxy    = MapActionProxy()
@@ -68,6 +74,7 @@ struct FloorPlanView: View {
                     coordinate: userLoc,
                     showFloorOverlay: $showFloorOverlay,
                     rooms: floorService.rooms,
+                    buildings: floorService.buildings,
                     actionProxy: mapProxy,
                     onBuildingZoom: { buildingId in
                         self.currentBuildingId = buildingId
@@ -190,6 +197,9 @@ struct FloorPlanView: View {
         .onAppear {
             setupFloorData()
             requestUserLocation()
+            if let campusId, floorService.buildings.isEmpty {
+                Task { await floorService.fetchBuildingLocators(campusId: campusId) }
+            }
         }
         .onChange(of: vm.selectedFloor) { _ in
             if showFloorOverlay, let buildingId = currentBuildingId {
@@ -323,9 +333,13 @@ struct MapViewWithOverlay: UIViewRepresentable {
     let coordinate: CLLocationCoordinate2D
     @Binding var showFloorOverlay: Bool
     let rooms: [Room]
+    let buildings: [BuildingLocator]
     let actionProxy: MapActionProxy
     let onBuildingZoom: (String?) -> Void
     let onZoomOut: () -> Void
+
+    private static let indoorZoomThreshold = 0.003
+    private static let buildingProximityMeters: CLLocationDistance = 200
 
     func makeUIView(context: Context) -> MKMapView {
         let mapView = MKMapView()
@@ -368,10 +382,12 @@ struct MapViewWithOverlay: UIViewRepresentable {
     private func buildOverlays(for rooms: [Room]) -> [MKOverlay] {
         var overlays: [MKOverlay] = []
 
-        var dimCoords = dimmerPolygonCoords()
-        let dimmer = MKPolygon(coordinates: &dimCoords, count: dimCoords.count)
-        dimmer.title = "dimmer"
-        overlays.append(dimmer)
+        if let anchor = activeBuildingCoordinate(in: rooms) {
+            var dimCoords = dimmerPolygonCoords(around: anchor)
+            let dimmer = MKPolygon(coordinates: &dimCoords, count: dimCoords.count)
+            dimmer.title = "dimmer"
+            overlays.append(dimmer)
+        }
 
         for room in rooms {
             guard var coords = room.polygonGlobal, coords.count >= 3 else { continue }
@@ -383,13 +399,23 @@ struct MapViewWithOverlay: UIViewRepresentable {
         return overlays
     }
 
-    private func dimmerPolygonCoords() -> [CLLocationCoordinate2D] {
-        let d = 0.5  // ~55 km box around AAU CPH
+    private func activeBuildingCoordinate(in rooms: [Room]) -> CLLocationCoordinate2D? {
+        for room in rooms {
+            if let coords = room.polygonGlobal, let first = coords.first {
+                return first
+            }
+            if let centroid = room.centroidGlobal { return centroid }
+        }
+        return nil
+    }
+
+    private func dimmerPolygonCoords(around anchor: CLLocationCoordinate2D) -> [CLLocationCoordinate2D] {
+        let d = 0.5 
         return [
-            CLLocationCoordinate2D(latitude: 55.6588 + d, longitude: 12.5055 - d),
-            CLLocationCoordinate2D(latitude: 55.6588 + d, longitude: 12.5055 + d),
-            CLLocationCoordinate2D(latitude: 55.6588 - d, longitude: 12.5055 + d),
-            CLLocationCoordinate2D(latitude: 55.6588 - d, longitude: 12.5055 - d),
+            CLLocationCoordinate2D(latitude: anchor.latitude + d, longitude: anchor.longitude - d),
+            CLLocationCoordinate2D(latitude: anchor.latitude + d, longitude: anchor.longitude + d),
+            CLLocationCoordinate2D(latitude: anchor.latitude - d, longitude: anchor.longitude + d),
+            CLLocationCoordinate2D(latitude: anchor.latitude - d, longitude: anchor.longitude - d),
         ]
     }
 
@@ -401,15 +427,28 @@ struct MapViewWithOverlay: UIViewRepresentable {
 
         func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {
             let zoomLevel = mapView.region.span.latitudeDelta
-            if zoomLevel < 0.003 {
-                let building = CLLocation(latitude: 55.6588, longitude: 12.5055)
-                let center   = CLLocation(latitude: mapView.centerCoordinate.latitude,
-                                          longitude: mapView.centerCoordinate.longitude)
-                if building.distance(from: center) < 200 {
-                    parent.onBuildingZoom("building_acm15")
-                } else {
-                    parent.onZoomOut()
+            guard zoomLevel < MapViewWithOverlay.indoorZoomThreshold else {
+                parent.onZoomOut()
+                return
+            }
+            let center = CLLocation(
+                latitude: mapView.centerCoordinate.latitude,
+                longitude: mapView.centerCoordinate.longitude,
+            )
+            var nearest: (BuildingLocator, CLLocationDistance)? = nil
+            for building in parent.buildings {
+                let loc = CLLocation(
+                    latitude: building.coordinate.latitude,
+                    longitude: building.coordinate.longitude,
+                )
+                let distance = center.distance(from: loc)
+                if nearest == nil || distance < nearest!.1 {
+                    nearest = (building, distance)
                 }
+            }
+            if let (building, distance) = nearest,
+               distance < MapViewWithOverlay.buildingProximityMeters {
+                parent.onBuildingZoom(building.id)
             } else {
                 parent.onZoomOut()
             }

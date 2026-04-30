@@ -9,9 +9,22 @@ import Foundation
 import CoreLocation
 import Combine
 
+/// Lightweight building record used by the map view to detect which building
+/// the user just zoomed onto. Pulled from `/campuses/{id}/buildings` so we
+/// don't need to load the full map export to know building origins.
+struct BuildingLocator: Identifiable, Hashable {
+    let id: String
+    let name: String
+    let coordinate: CLLocationCoordinate2D
+
+    func hash(into hasher: inout Hasher) { hasher.combine(id) }
+    static func == (a: BuildingLocator, b: BuildingLocator) -> Bool { a.id == b.id }
+}
+
 /// Service for fetching floor plan geometry and building data
 class FloorPlanService: ObservableObject {
     @Published var rooms: [Room] = []
+    @Published var buildings: [BuildingLocator] = []
     @Published var isLoading = false
     @Published var error: String?
 
@@ -21,6 +34,36 @@ class FloorPlanService: ObservableObject {
     init(baseURL: URL = URL(string: AppSecrets.backendURL + "/api/v1")!) {
         self.baseURL = baseURL
         self.session = URLSession.shared
+    }
+
+    /// Fetch the campus's buildings with origin lat/lng. Buildings without
+    /// global coordinates are filtered out — they can't be located on a map.
+    func fetchBuildingLocators(campusId: String) async {
+        var request = URLRequest(url: baseURL.appendingPathComponent("campuses/\(campusId)/buildings"))
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(AppSecrets.apiSecret, forHTTPHeaderField: "X-Api-Key")
+        request.attachBearer()
+
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                throw NSError(domain: "FloorPlanService", code: -1)
+            }
+            let items = try JSONDecoder().decode([BuildingLocatorItem].self, from: data)
+            let locators = items.compactMap { item -> BuildingLocator? in
+                guard let lat = item.origin_lat, let lng = item.origin_lng else { return nil }
+                return BuildingLocator(
+                    id: item.id,
+                    name: item.name,
+                    coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lng)
+                )
+            }
+            await MainActor.run { self.buildings = locators }
+        } catch {
+            await MainActor.run {
+                self.error = "Failed to load buildings: \(error.localizedDescription)"
+            }
+        }
     }
 
     /// Fetch floor display data (spaces with polygon_global) for a specific floor
@@ -83,6 +126,13 @@ class FloorPlanService: ObservableObject {
 }
 
 // MARK: - Backend Response Models
+
+private struct BuildingLocatorItem: Decodable {
+    let id: String
+    let name: String
+    let origin_lat: Double?
+    let origin_lng: Double?
+}
 
 /// Matches the flat space object returned by GET /floors/{floor_id}/display
 private struct SpaceDisplayItem: Decodable {

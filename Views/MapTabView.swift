@@ -12,9 +12,9 @@ struct MapTabView: View {
     @State private var selectedCampus: CampusDTO?
 
     var body: some View {
-        if selectedOrg != nil, selectedCampus != nil {
+        if selectedOrg != nil, let campus = selectedCampus {
             ZStack(alignment: .topTrailing) {
-                FloorPlanView()
+                FloorPlanView(campusId: campus.id)
 
                 Button {
                     selectedOrg = nil
