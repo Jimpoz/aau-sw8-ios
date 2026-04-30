@@ -170,6 +170,8 @@ class FloorPlanService: ObservableObject {
 
             let items = try JSONDecoder().decode([SpaceDisplayItem].self, from: data)
             let decoded = items.compactMap { $0.toRoom() }
+            let withGlobal = decoded.filter { ($0.polygonGlobal?.count ?? 0) >= 3 }.count
+            print("[GEOM] floor \(floorId): \(items.count) spaces from API → \(decoded.count) rooms, \(withGlobal) with polygon_global")
 
             DispatchQueue.main.async {
                 self.rooms = decoded

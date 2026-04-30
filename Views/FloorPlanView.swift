@@ -52,6 +52,7 @@ struct RouteDestination {
 }
 
 struct FloorPlanView: View {
+    @EnvironmentObject private var mapNav: MapNavigationCoordinator
     @StateObject private var vm          = FloorPlanViewModel()
     @StateObject private var floorService = FloorPlanService()
     @StateObject private var mapProxy    = MapActionProxy()
@@ -67,38 +68,35 @@ struct FloorPlanView: View {
     @State private var isAskingForDirections = false
     @State private var directionsPrompt = ""
     @State private var isResolvingRoute = false
-    @State private var isShowingBuildings = false
 
     var body: some View {
         ZStack {
             Color.gray.opacity(0.05).ignoresSafeArea()
 
-            if let userLoc = userLocation {
-                MapViewWithOverlay(
-                    coordinate: userLoc,
-                    showFloorOverlay: $showFloorOverlay,
-                    rooms: floorService.rooms,
-                    buildings: floorService.buildings,
-                    actionProxy: mapProxy,
-                    onBuildingZoom: { buildingId in
-                        let changedBuilding = (buildingId != self.currentBuildingId)
-                        self.currentBuildingId = buildingId
-                        self.showFloorOverlay  = true
-                        if let buildingId {
-                            if changedBuilding {
-                                loadFloorsAndOverlay(buildingId: buildingId)
-                            } else {
-                                loadBuildingFloorData(buildingId: buildingId)
-                            }
+            MapViewWithOverlay(
+                coordinate: userLocation ?? CLLocationCoordinate2D(latitude: 55.6761, longitude: 12.5683),
+                showFloorOverlay: $showFloorOverlay,
+                rooms: floorService.rooms,
+                buildings: floorService.buildings,
+                actionProxy: mapProxy,
+                onBuildingZoom: { buildingId in
+                    let changedBuilding = (buildingId != self.currentBuildingId)
+                    self.currentBuildingId = buildingId
+                    self.showFloorOverlay  = true
+                    if let buildingId {
+                        if changedBuilding {
+                            loadFloorsAndOverlay(buildingId: buildingId)
+                        } else {
+                            loadBuildingFloorData(buildingId: buildingId)
                         }
-                    },
-                    onZoomOut: {
-                        self.showFloorOverlay  = false
-                        self.currentBuildingId = nil
                     }
-                )
-                .ignoresSafeArea()
-            }
+                },
+                onZoomOut: {
+                    self.showFloorOverlay  = false
+                    self.currentBuildingId = nil
+                }
+            )
+            .ignoresSafeArea()
 
             if floorService.isLoading {
                 ProgressView().scaleEffect(1.5)
@@ -132,20 +130,6 @@ struct FloorPlanView: View {
                     )
 
                     Spacer()
-
-                    Button { isShowingBuildings = true } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "building.2.fill")
-                                .font(.system(size: 12, weight: .bold))
-                            Text("Buildings")
-                                .font(.system(size: 12, weight: .semibold))
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .foregroundStyle(.white)
-                        .background(Color.blue, in: Capsule())
-                        .shadow(color: Color.blue.opacity(0.25), radius: 6, x: 0, y: 3)
-                    }
 
                     ZoomControls(
                         zoomIn:  { mapProxy.zoomIn()  },
@@ -223,26 +207,34 @@ struct FloorPlanView: View {
             setupFloorData()
             requestUserLocation()
             if floorService.buildings.isEmpty {
-                Task { await floorService.fetchVisibleBuildings() }
-            }
-        }
-        .sheet(isPresented: $isShowingBuildings) {
-            BuildingsListSheet(
-                buildings: floorService.buildings,
-                isLoading: floorService.isLoading && floorService.buildings.isEmpty,
-                onSelect: { building in
-                    isShowingBuildings = false
-                    mapProxy.flyTo(building.coordinate)
+                Task {
+                    await floorService.fetchVisibleBuildings()
+                    consumePendingBuildingTarget()
                 }
-            )
+            } else {
+                consumePendingBuildingTarget()
+            }
         }
         .onChange(of: vm.selectedFloor) { _ in
             if showFloorOverlay, let buildingId = currentBuildingId {
                 loadBuildingFloorData(buildingId: buildingId)
             }
         }
+        .onChange(of: mapNav.pendingBuildingId) { _ in consumePendingBuildingTarget() }
+        .onChange(of: floorService.buildings.count) { _ in consumePendingBuildingTarget() }
         .onReceive(locationManager.$lastLocation) { _ in syncFromLocationManager() }
         .onReceive(locationManager.$horizontalAccuracyMeters) { _ in syncFromLocationManager() }
+    }
+
+    private func consumePendingBuildingTarget() {
+        guard let pending = mapNav.pendingBuildingId else { return }
+        guard let building = floorService.buildings.first(where: { $0.id == pending }) else {
+            print("[NAV] pending building \(pending) not yet in locators (count=\(floorService.buildings.count)), waiting…")
+            return
+        }
+        print("[NAV] flying to building \(building.name) at \(building.coordinate)")
+        mapProxy.flyTo(building.coordinate)
+        mapNav.pendingBuildingId = nil
     }
 
     private func askForDirections() {
@@ -434,8 +426,19 @@ struct MapViewWithOverlay: UIViewRepresentable {
         }
 
         uiView.removeOverlays(uiView.overlays)
-        if showFloorOverlay && !rooms.isEmpty {
-            uiView.addOverlays(buildOverlays(for: rooms), level: .aboveRoads)
+        let polygons = buildOverlays(for: rooms)
+        let withGlobal = rooms.filter { ($0.polygonGlobal?.count ?? 0) >= 3 }.count
+        print("[OVERLAY] showFloorOverlay=\(showFloorOverlay) rooms=\(rooms.count) withPolygonGlobal=\(withGlobal) → addOverlays=\(polygons.count)")
+        if showFloorOverlay && !polygons.isEmpty {
+            uiView.addOverlays(polygons, level: .aboveLabels)
+            if let first = polygons.first as? MKPolygon {
+                let rect = polygons.reduce(first.boundingMapRect) { $0.union($1.boundingMapRect) }
+                let padded = rect.insetBy(dx: -rect.size.width * 0.4, dy: -rect.size.height * 0.4)
+                if !uiView.visibleMapRect.contains(rect) {
+                    print("[OVERLAY] visibleMapRect does not contain polygons; current span=\(uiView.region.span.latitudeDelta)")
+                }
+                _ = padded
+            }
         }
     }
 
@@ -444,14 +447,6 @@ struct MapViewWithOverlay: UIViewRepresentable {
 
     private func buildOverlays(for rooms: [Room]) -> [MKOverlay] {
         var overlays: [MKOverlay] = []
-
-        if let anchor = activeBuildingCoordinate(in: rooms) {
-            var dimCoords = dimmerPolygonCoords(around: anchor)
-            let dimmer = MKPolygon(coordinates: &dimCoords, count: dimCoords.count)
-            dimmer.title = "dimmer"
-            overlays.append(dimmer)
-        }
-
         for room in rooms {
             guard var coords = room.polygonGlobal, coords.count >= 3 else { continue }
             let polygon = MKPolygon(coordinates: &coords, count: coords.count)
@@ -460,26 +455,6 @@ struct MapViewWithOverlay: UIViewRepresentable {
             overlays.append(polygon)
         }
         return overlays
-    }
-
-    private func activeBuildingCoordinate(in rooms: [Room]) -> CLLocationCoordinate2D? {
-        for room in rooms {
-            if let coords = room.polygonGlobal, let first = coords.first {
-                return first
-            }
-            if let centroid = room.centroidGlobal { return centroid }
-        }
-        return nil
-    }
-
-    private func dimmerPolygonCoords(around anchor: CLLocationCoordinate2D) -> [CLLocationCoordinate2D] {
-        let d = 0.5 
-        return [
-            CLLocationCoordinate2D(latitude: anchor.latitude + d, longitude: anchor.longitude - d),
-            CLLocationCoordinate2D(latitude: anchor.latitude + d, longitude: anchor.longitude + d),
-            CLLocationCoordinate2D(latitude: anchor.latitude - d, longitude: anchor.longitude + d),
-            CLLocationCoordinate2D(latitude: anchor.latitude - d, longitude: anchor.longitude - d),
-        ]
     }
 
     class Coordinator: NSObject, MKMapViewDelegate {
@@ -496,13 +471,13 @@ struct MapViewWithOverlay: UIViewRepresentable {
             }
             let center = CLLocation(
                 latitude: mapView.centerCoordinate.latitude,
-                longitude: mapView.centerCoordinate.longitude,
+                longitude: mapView.centerCoordinate.longitude
             )
             var nearest: (BuildingLocator, CLLocationDistance)? = nil
             for building in parent.buildings {
                 let loc = CLLocation(
                     latitude: building.coordinate.latitude,
-                    longitude: building.coordinate.longitude,
+                    longitude: building.coordinate.longitude
                 )
                 let distance = center.distance(from: loc)
                 if nearest == nil || distance < nearest!.1 {
@@ -511,8 +486,12 @@ struct MapViewWithOverlay: UIViewRepresentable {
             }
             if let (building, distance) = nearest,
                distance < MapViewWithOverlay.buildingProximityMeters {
+                print("[PROX] zoom=\(zoomLevel) → \(building.name) at \(Int(distance))m, triggering overlay")
                 parent.onBuildingZoom(building.id)
             } else {
+                let nearestName = nearest?.0.name ?? "none"
+                let nearestDist = nearest.map { Int($0.1) } ?? -1
+                print("[PROX] zoom=\(zoomLevel) but nearest building \(nearestName) is \(nearestDist)m away (need <\(Int(MapViewWithOverlay.buildingProximityMeters))m), skipping overlay")
                 parent.onZoomOut()
             }
         }
@@ -520,16 +499,10 @@ struct MapViewWithOverlay: UIViewRepresentable {
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
             if let polygon = overlay as? MKPolygon {
                 let r = MKPolygonRenderer(polygon: polygon)
-                if polygon.title == "dimmer" {
-                    r.fillColor   = UIColor.black.withAlphaComponent(0.35)
-                    r.strokeColor = .clear
-                    r.lineWidth   = 0
-                } else {
-                    let color = uiColorForRoomType(polygon.title ?? "")
-                    r.fillColor   = color.withAlphaComponent(0.65)
-                    r.strokeColor = color.withAlphaComponent(0.9)
-                    r.lineWidth   = 1.5
-                }
+                let color = uiColorForRoomType(polygon.title ?? "")
+                r.fillColor   = color.withAlphaComponent(0.75)
+                r.strokeColor = color.withAlphaComponent(0.95)
+                r.lineWidth   = 1.5
                 return r
             }
             if let floorOverlay = overlay as? FloorPlanOverlay {
@@ -756,104 +729,6 @@ private struct BottomRouteCard: View {
         .background(Color.white, in: RoundedRectangle(cornerRadius: 24))
         .overlay(RoundedRectangle(cornerRadius: 24).stroke(Color.gray.opacity(0.2)))
         .shadow(color: Color.black.opacity(0.12), radius: 24, x: 0, y: 12)
-    }
-}
-
-private struct BuildingsListSheet: View {
-    let buildings: [BuildingLocator]
-    let isLoading: Bool
-    let onSelect: (BuildingLocator) -> Void
-
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            Group {
-                if isLoading && buildings.isEmpty {
-                    VStack(spacing: 12) {
-                        ProgressView()
-                        Text("Loading buildings…")
-                            .font(.system(size: 13))
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if buildings.isEmpty {
-                    VStack(spacing: 8) {
-                        Image(systemName: "building.2")
-                            .font(.system(size: 32, weight: .light))
-                            .foregroundStyle(.secondary)
-                        Text("No buildings available")
-                            .font(.system(size: 15, weight: .semibold))
-                        Text("There are no buildings tied to your account or marked public yet.")
-                            .font(.system(size: 13))
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 32)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    List(buildings) { building in
-                        Button { onSelect(building) } label: {
-                            BuildingsListRow(building: building)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .listStyle(.plain)
-                }
-            }
-            .navigationTitle("Buildings")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
-                }
-            }
-        }
-    }
-}
-
-private struct BuildingsListRow: View {
-    let building: BuildingLocator
-
-    var body: some View {
-        HStack(spacing: 12) {
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color.blue.opacity(0.12))
-                .frame(width: 40, height: 40)
-                .overlay(
-                    Image(systemName: "building.2.fill")
-                        .foregroundStyle(Color.blue)
-                )
-            VStack(alignment: .leading, spacing: 2) {
-                Text(building.name)
-                    .font(.system(size: 15, weight: .semibold))
-                if let subtitle = subtitleParts(for: building) {
-                    Text(subtitle)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                if let address = building.address, !address.isEmpty {
-                    Text(address)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
-            Spacer()
-            Image(systemName: "location.north.fill")
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(Color.blue)
-        }
-        .padding(.vertical, 4)
-        .contentShape(Rectangle())
-    }
-
-    private func subtitleParts(for building: BuildingLocator) -> String? {
-        var parts: [String] = []
-        if let org = building.organizationName, !org.isEmpty { parts.append(org) }
-        if building.isPublic { parts.append("Public") }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 }
 

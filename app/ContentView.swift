@@ -11,9 +11,17 @@ enum AppTab: Hashable {
     case floorPlan, assistant, camera, explore, profile
 }
 
+/// Cross-tab signal: when ExploreView wants to hand off a building to the map,
+/// it stamps `pendingBuildingId` and switches `selectedTab` to `.floorPlan`.
+/// FloorPlanView consumes the id, flies the MKMapView there, and clears it.
+final class MapNavigationCoordinator: ObservableObject {
+    @Published var selectedTab: AppTab = .floorPlan
+    @Published var pendingBuildingId: String?
+}
+
 struct ContentView: View {
     @EnvironmentObject private var authService: AuthService
-    @State private var selected: AppTab = .floorPlan
+    @StateObject private var mapNav = MapNavigationCoordinator()
     @State private var showCameraPulse = false
 
     var body: some View {
@@ -33,7 +41,7 @@ struct ContentView: View {
 
     private var mainTabs: some View {
         ZStack {
-            TabView(selection: $selected) {
+            TabView(selection: $mapNav.selectedTab) {
                 MapTabView()
                     .tag(AppTab.floorPlan)
                     .tabItem { Label("Map", systemImage: "map") }
@@ -57,6 +65,7 @@ struct ContentView: View {
                     .tabItem { Label("Profile", systemImage: "person.crop.circle") }
             }
             .background(Color.slate50)
+            .environmentObject(mapNav)
         }
     }
 }
