@@ -9,13 +9,29 @@ import Foundation
 import CoreLocation
 import Combine
 
-/// Lightweight building record used by the map view to detect which building
-/// the user just zoomed onto. Pulled from `/campuses/{id}/buildings` so we
-/// don't need to load the full map export to know building origins.
 struct BuildingLocator: Identifiable, Hashable {
     let id: String
     let name: String
     let coordinate: CLLocationCoordinate2D
+    let address: String?
+    let organizationName: String?
+    let isPublic: Bool
+
+    init(
+        id: String,
+        name: String,
+        coordinate: CLLocationCoordinate2D,
+        address: String? = nil,
+        organizationName: String? = nil,
+        isPublic: Bool = false
+    ) {
+        self.id = id
+        self.name = name
+        self.coordinate = coordinate
+        self.address = address
+        self.organizationName = organizationName
+        self.isPublic = isPublic
+    }
 
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
     static func == (a: BuildingLocator, b: BuildingLocator) -> Bool { a.id == b.id }
@@ -36,8 +52,6 @@ class FloorPlanService: ObservableObject {
         self.session = URLSession.shared
     }
 
-    /// Fetch the campus's buildings with origin lat/lng. Buildings without
-    /// global coordinates are filtered out — they can't be located on a map.
     func fetchBuildingLocators(campusId: String) async {
         var request = URLRequest(url: baseURL.appendingPathComponent("campuses/\(campusId)/buildings"))
         request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -55,7 +69,41 @@ class FloorPlanService: ObservableObject {
                 return BuildingLocator(
                     id: item.id,
                     name: item.name,
-                    coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lng)
+                    coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lng),
+                    address: item.address
+                )
+            }
+            await MainActor.run { self.buildings = locators }
+        } catch {
+            await MainActor.run {
+                self.error = "Failed to load buildings: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func fetchVisibleBuildings() async {
+        var request = URLRequest(url: baseURL.appendingPathComponent("buildings/visible"))
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(AppSecrets.apiSecret, forHTTPHeaderField: "X-Api-Key")
+        request.attachBearer()
+
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                throw NSError(domain: "FloorPlanService", code: -1)
+            }
+            let items = try JSONDecoder().decode([VisibleBuildingItem].self, from: data)
+            let locators = items.map { item in
+                BuildingLocator(
+                    id: item.id,
+                    name: item.name,
+                    coordinate: CLLocationCoordinate2D(
+                        latitude: item.origin_lat,
+                        longitude: item.origin_lng
+                    ),
+                    address: item.address,
+                    organizationName: item.organization_name,
+                    isPublic: item.is_public
                 )
             }
             await MainActor.run { self.buildings = locators }
@@ -130,8 +178,20 @@ class FloorPlanService: ObservableObject {
 private struct BuildingLocatorItem: Decodable {
     let id: String
     let name: String
+    let address: String?
     let origin_lat: Double?
     let origin_lng: Double?
+}
+
+private struct VisibleBuildingItem: Decodable {
+    let id: String
+    let name: String
+    let address: String?
+    let organization_id: String?
+    let organization_name: String?
+    let is_public: Bool
+    let origin_lat: Double
+    let origin_lng: Double
 }
 
 /// Matches the flat space object returned by GET /floors/{floor_id}/display

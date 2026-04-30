@@ -34,6 +34,15 @@ final class MapActionProxy: ObservableObject {
               let coord = mv.userLocation.location?.coordinate else { return }
         mv.setCenter(coord, animated: true)
     }
+
+    func flyTo(_ coordinate: CLLocationCoordinate2D) {
+        guard let mv = mapView else { return }
+        let region = MKCoordinateRegion(
+            center: coordinate,
+            span: MKCoordinateSpan(latitudeDelta: 0.001, longitudeDelta: 0.001)
+        )
+        mv.setRegion(region, animated: true)
+    }
 }
 
 struct RouteDestination {
@@ -43,12 +52,6 @@ struct RouteDestination {
 }
 
 struct FloorPlanView: View {
-    let campusId: String?
-
-    init(campusId: String? = nil) {
-        self.campusId = campusId
-    }
-
     @StateObject private var vm          = FloorPlanViewModel()
     @StateObject private var floorService = FloorPlanService()
     @StateObject private var mapProxy    = MapActionProxy()
@@ -64,6 +67,7 @@ struct FloorPlanView: View {
     @State private var isAskingForDirections = false
     @State private var directionsPrompt = ""
     @State private var isResolvingRoute = false
+    @State private var isShowingBuildings = false
 
     var body: some View {
         ZStack {
@@ -121,6 +125,20 @@ struct FloorPlanView: View {
                     )
 
                     Spacer()
+
+                    Button { isShowingBuildings = true } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "building.2.fill")
+                                .font(.system(size: 12, weight: .bold))
+                            Text("Buildings")
+                                .font(.system(size: 12, weight: .semibold))
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .foregroundStyle(.white)
+                        .background(Color.blue, in: Capsule())
+                        .shadow(color: Color.blue.opacity(0.25), radius: 6, x: 0, y: 3)
+                    }
 
                     ZoomControls(
                         zoomIn:  { mapProxy.zoomIn()  },
@@ -197,9 +215,19 @@ struct FloorPlanView: View {
         .onAppear {
             setupFloorData()
             requestUserLocation()
-            if let campusId, floorService.buildings.isEmpty {
-                Task { await floorService.fetchBuildingLocators(campusId: campusId) }
+            if floorService.buildings.isEmpty {
+                Task { await floorService.fetchVisibleBuildings() }
             }
+        }
+        .sheet(isPresented: $isShowingBuildings) {
+            BuildingsListSheet(
+                buildings: floorService.buildings,
+                isLoading: floorService.isLoading && floorService.buildings.isEmpty,
+                onSelect: { building in
+                    isShowingBuildings = false
+                    mapProxy.flyTo(building.coordinate)
+                }
+            )
         }
         .onChange(of: vm.selectedFloor) { _ in
             if showFloorOverlay, let buildingId = currentBuildingId {
@@ -693,6 +721,104 @@ private struct BottomRouteCard: View {
         .background(Color.white, in: RoundedRectangle(cornerRadius: 24))
         .overlay(RoundedRectangle(cornerRadius: 24).stroke(Color.gray.opacity(0.2)))
         .shadow(color: Color.black.opacity(0.12), radius: 24, x: 0, y: 12)
+    }
+}
+
+private struct BuildingsListSheet: View {
+    let buildings: [BuildingLocator]
+    let isLoading: Bool
+    let onSelect: (BuildingLocator) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if isLoading && buildings.isEmpty {
+                    VStack(spacing: 12) {
+                        ProgressView()
+                        Text("Loading buildings…")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if buildings.isEmpty {
+                    VStack(spacing: 8) {
+                        Image(systemName: "building.2")
+                            .font(.system(size: 32, weight: .light))
+                            .foregroundStyle(.secondary)
+                        Text("No buildings available")
+                            .font(.system(size: 15, weight: .semibold))
+                        Text("There are no buildings tied to your account or marked public yet.")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 32)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    List(buildings) { building in
+                        Button { onSelect(building) } label: {
+                            BuildingsListRow(building: building)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .listStyle(.plain)
+                }
+            }
+            .navigationTitle("Buildings")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+private struct BuildingsListRow: View {
+    let building: BuildingLocator
+
+    var body: some View {
+        HStack(spacing: 12) {
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.blue.opacity(0.12))
+                .frame(width: 40, height: 40)
+                .overlay(
+                    Image(systemName: "building.2.fill")
+                        .foregroundStyle(Color.blue)
+                )
+            VStack(alignment: .leading, spacing: 2) {
+                Text(building.name)
+                    .font(.system(size: 15, weight: .semibold))
+                if let subtitle = subtitleParts(for: building) {
+                    Text(subtitle)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                if let address = building.address, !address.isEmpty {
+                    Text(address)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            Spacer()
+            Image(systemName: "location.north.fill")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(Color.blue)
+        }
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
+    }
+
+    private func subtitleParts(for building: BuildingLocator) -> String? {
+        var parts: [String] = []
+        if let org = building.organizationName, !org.isEmpty { parts.append(org) }
+        if building.isPublic { parts.append("Public") }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 }
 
