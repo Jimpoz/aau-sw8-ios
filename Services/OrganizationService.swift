@@ -22,6 +22,15 @@ struct CampusDTO: Identifiable, Codable, Hashable {
     let organization_id: String?
 }
 
+struct VisibleCampusDTO: Identifiable, Codable, Hashable {
+    let id: String
+    let name: String
+    let description: String?
+    let organization_id: String?
+    let organization_name: String?
+    let is_public: Bool
+}
+
 struct BuildingDTO: Identifiable, Codable, Hashable {
     let id: String
     let campus_id: String
@@ -35,6 +44,7 @@ struct BuildingDTO: Identifiable, Codable, Hashable {
 final class OrganizationService: ObservableObject {
     @Published var organizations: [OrganizationDTO] = []
     @Published var campuses: [CampusDTO] = []
+    @Published var visibleCampuses: [VisibleCampusDTO] = []
     @Published var buildings: [BuildingDTO] = []
     @Published var isLoading = false
     @Published var errorText: String?
@@ -66,6 +76,20 @@ final class OrganizationService: ObservableObject {
             campuses = try await get(
                 path: "organizations/\(orgId)/campuses",
                 as: [CampusDTO].self
+            )
+        } catch {
+            errorText = "Could not load campuses: \(error.localizedDescription)"
+        }
+    }
+
+    func loadVisibleCampuses() async {
+        isLoading = true
+        errorText = nil
+        defer { isLoading = false }
+        do {
+            visibleCampuses = try await get(
+                path: "campuses/visible",
+                as: [VisibleCampusDTO].self
             )
         } catch {
             errorText = "Could not load campuses: \(error.localizedDescription)"

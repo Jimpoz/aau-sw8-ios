@@ -8,16 +8,14 @@
 import SwiftUI
 
 struct MapTabView: View {
-    @State private var selectedOrg: OrganizationDTO?
-    @State private var selectedCampus: CampusDTO?
+    @State private var selectedCampus: VisibleCampusDTO?
 
     var body: some View {
-        if selectedOrg != nil, let campus = selectedCampus {
+        if let campus = selectedCampus {
             ZStack(alignment: .topTrailing) {
                 FloorPlanView(campusId: campus.id)
 
                 Button {
-                    selectedOrg = nil
                     selectedCampus = nil
                 } label: {
                     HStack(spacing: 6) {
@@ -35,15 +33,14 @@ struct MapTabView: View {
                 .padding(.trailing, 16)
             }
         } else {
-            OrganizationPickerView(
+            VisibleCampusPickerView(
                 title: "Choose a campus",
-                subtitle: "Pick an organization and a campus to open the floor map."
-            ) { org, campus in
-                selectedOrg = org
+                subtitle: "Pick a campus from your organization or a public location."
+            ) { campus in
                 selectedCampus = campus
             }
         }
     }
 }
 
-#Preview("MapTab") { MapTabView() }
+#Preview("MapTab") { MapTabView().environmentObject(AuthService()) }

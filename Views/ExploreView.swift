@@ -4,27 +4,22 @@
 //
 //  Created by jimpo on 17/02/26.
 //
-//  Browse organizations → campuses → buildings, fetched live from the spatial backend.
-//
 
 import SwiftUI
 
 struct ExploreView: View {
-    @State private var selectedOrg: OrganizationDTO?
-    @State private var selectedCampus: CampusDTO?
+    @State private var selectedCampus: VisibleCampusDTO?
 
     var body: some View {
-        if let org = selectedOrg, let campus = selectedCampus {
-            ExploreCampusView(org: org, campus: campus) {
-                selectedOrg = nil
+        if let campus = selectedCampus {
+            ExploreCampusView(campus: campus) {
                 selectedCampus = nil
             }
         } else {
-            OrganizationPickerView(
+            VisibleCampusPickerView(
                 title: "Explore",
-                subtitle: "Pick an organization, then a campus to browse its buildings."
-            ) { org, campus in
-                selectedOrg = org
+                subtitle: "Pick a campus to browse its buildings."
+            ) { campus in
                 selectedCampus = campus
             }
         }
@@ -32,8 +27,7 @@ struct ExploreView: View {
 }
 
 private struct ExploreCampusView: View {
-    let org: OrganizationDTO
-    let campus: CampusDTO
+    let campus: VisibleCampusDTO
     let onChangeCampus: () -> Void
 
     @StateObject private var orgs = OrganizationService()
@@ -80,9 +74,15 @@ private struct ExploreCampusView: View {
                 Text("Explore")
                     .font(.system(size: 24, weight: .bold))
                     .foregroundStyle(Color.slate800)
-                Text(org.name)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Color.slate500)
+                if let orgName = campus.organization_name, !orgName.isEmpty {
+                    Text(orgName)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Color.slate500)
+                } else if campus.is_public {
+                    Text("Public location")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Color.slate500)
+                }
             }
             Spacer()
             Button(action: onChangeCampus) {
@@ -208,4 +208,4 @@ private struct BuildingRow: View {
     }
 }
 
-#Preview("Explore") { ExploreView() }
+#Preview("Explore") { ExploreView().environmentObject(AuthService()) }
