@@ -76,6 +76,53 @@ class NavigationService: ObservableObject {
             }
         }
     }
+
+    func computeRoute(fromLatitude lat: Double, longitude lon: Double, to endSpaceId: String) async {
+        DispatchQueue.main.async {
+            self.isLoading = true
+            self.error = nil
+        }
+
+        var comps = URLComponents(url: baseURL.appendingPathComponent("search/nearest-space"), resolvingAgainstBaseURL: false)
+        comps?.queryItems = [
+            URLQueryItem(name: "lat", value: "\(lat)"),
+            URLQueryItem(name: "lon", value: "\(lon)"),
+            URLQueryItem(name: "limit", value: "1")
+        ]
+        guard let url = comps?.url else {
+            DispatchQueue.main.async {
+                self.error = "Invalid URL for nearest-space"
+                self.isLoading = false
+            }
+            return
+        }
+
+        var req = URLRequest(url: url)
+        req.setValue(AppSecrets.apiSecret, forHTTPHeaderField: "X-Api-Key")
+        req.attachBearer()
+
+        do {
+            let (data, response) = try await session.data(for: req)
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                throw NSError(domain: "Invalid response", code: -1)
+            }
+            let decoder = JSONDecoder()
+            let items = try decoder.decode([NearestSpaceItem].self, from: data)
+            guard let first = items.first else {
+                DispatchQueue.main.async {
+                    self.error = "No nearby navigable space found"
+                    self.isLoading = false
+                }
+                return
+            }
+            await computeRoute(from: first.id, to: endSpaceId)
+        } catch {
+            DispatchQueue.main.async {
+                self.error = "Failed to resolve nearest space: \(error.localizedDescription)"
+                self.isLoading = false
+            }
+        }
+    }
     
     /// Get route visualization as SVG
     func getRouteVisualization(from startSpaceId: String, to endSpaceId: String) async -> String? {
@@ -160,4 +207,14 @@ struct NavigationStep {
     let instruction: String
     let spaceId: String
     let stepNumber: Int
+}
+
+private struct NearestSpaceItem: Decodable {
+    let id: String
+    let display_name: String?
+    let building_id: String?
+    let floor_id: String?
+    let campus_id: String?
+    let centroid_lat: Double?
+    let centroid_lon: Double?
 }

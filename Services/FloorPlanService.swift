@@ -48,6 +48,7 @@ class FloorPlanService: ObservableObject {
     @Published var rooms: [Room] = []
     @Published var buildings: [BuildingLocator] = []
     @Published var floors: [FloorSummary] = []
+    @Published var suggestions: [SpaceSuggestion] = []
     @Published var isLoading = false
     @Published var error: String?
 
@@ -207,6 +208,54 @@ class FloorPlanService: ObservableObject {
             return nil
         }
     }
+
+    func searchGlobal(_ query: String) async {
+        guard !query.trimmingCharacters(in: .whitespaces).isEmpty else {
+            await MainActor.run { self.suggestions = [] }
+            return
+        }
+
+        let url = baseURL.appendingPathComponent("search/spaces")
+        var comps = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+        comps.queryItems = [URLQueryItem(name: "q", value: query), URLQueryItem(name: "limit", value: "20")]
+        guard let final = comps.url else { return }
+
+        var request = URLRequest(url: final)
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(AppSecrets.apiSecret, forHTTPHeaderField: "X-Api-Key")
+        request.attachBearer()
+
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else { return }
+            let items = try JSONDecoder().decode([SpaceSearchItem].self, from: data)
+            let sugg = items.map { SpaceSuggestion(id: $0.id, name: $0.display_name ?? $0.id, buildingId: $0.building_id, floorId: $0.floor_id, campusId: $0.campus_id, lat: $0.centroid_lat, lon: $0.centroid_lon) }
+            await MainActor.run { self.suggestions = sugg }
+        } catch {
+            await MainActor.run { self.suggestions = [] }
+        }
+    }
+
+    func nearestSpace(lat: Double, lon: Double) async -> SpaceSuggestion? {
+        var comps = URLComponents(url: baseURL.appendingPathComponent("search/nearest-space"), resolvingAgainstBaseURL: false)!
+        comps.queryItems = [URLQueryItem(name: "lat", value: "\(lat)"), URLQueryItem(name: "lon", value: "\(lon)"), URLQueryItem(name: "limit", value: "1")]
+        guard let url = comps.url else { return nil }
+        var request = URLRequest(url: url)
+        request.setValue(AppSecrets.apiSecret, forHTTPHeaderField: "X-Api-Key")
+        request.attachBearer()
+
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else { return nil }
+            let items = try JSONDecoder().decode([SpaceSearchItem].self, from: data)
+            if let s = items.first {
+                return SpaceSuggestion(id: s.id, name: s.display_name ?? s.id, buildingId: s.building_id, floorId: s.floor_id, campusId: s.campus_id, lat: s.centroid_lat, lon: s.centroid_lon)
+            }
+            return nil
+        } catch {
+            return nil
+        }
+    }
 }
 
 // MARK: - Backend Response Models
@@ -296,5 +345,31 @@ private struct SpaceDisplayItem: Decodable {
         case "SHOP": return .shop
         default: return .other
         }
+    }
+}
+
+// Lightweight search item returned by the backend search endpoints
+private struct SpaceSearchItem: Decodable {
+    let id: String
+    let display_name: String?
+    let building_id: String?
+    let floor_id: String?
+    let campus_id: String?
+    let centroid_lat: Double?
+    let centroid_lon: Double?
+}
+
+struct SpaceSuggestion: Identifiable, Hashable {
+    let id: String
+    let name: String
+    let buildingId: String?
+    let floorId: String?
+    let campusId: String?
+    let lat: Double?
+    let lon: Double?
+
+    var coordinate: CLLocationCoordinate2D? {
+        guard let la = lat, let lo = lon else { return nil }
+        return CLLocationCoordinate2D(latitude: la, longitude: lo)
     }
 }

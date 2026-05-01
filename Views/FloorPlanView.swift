@@ -59,9 +59,11 @@ struct FloorPlanView: View {
     @StateObject private var floorService = FloorPlanService()
     @StateObject private var mapProxy    = MapActionProxy()
     @StateObject private var assistant   = AssistantService()
+    @StateObject private var navigationService = NavigationService()
     @StateObject private var locationManager = LocationManager()
 
     @State private var searchText        = ""
+    @State private var searchTask: Task<Void, Never>? = nil
     @State private var userLocation: CLLocationCoordinate2D?
     @State private var locationAccuracy: Double?
     @State private var showFloorOverlay  = false
@@ -124,6 +126,42 @@ struct FloorPlanView: View {
             VStack(spacing: 6) {
                 SearchBar(text: $searchText, onSearch: handleSearch)
                     .padding(.horizontal, 16)
+
+                if !floorService.suggestions.isEmpty && !searchText.trimmingCharacters(in: .whitespaces).isEmpty {
+                    ScrollView(.vertical, showsIndicators: true) {
+                        VStack(spacing: 0) {
+                            ForEach(floorService.suggestions, id: \.id) { s in
+                                Button(action: {
+                                    searchText = s.name
+                                    if let coord = s.coordinate {
+                                        mapNav.pendingBuildingCoordinate = coord
+                                    }
+                                    mapNav.pendingBuildingId = s.buildingId
+                                    Task { await MainActor.run { floorService.suggestions = [] } }
+                                }) {
+                                    HStack {
+                                        VStack(alignment: .leading) {
+                                            Text(s.name).font(.system(size: 14, weight: .semibold)).foregroundColor(.black)
+                                            HStack {
+                                                if let bid = s.buildingId { Text(bid).font(.system(size: 12)).foregroundColor(.gray) }
+                                                Spacer()
+                                                if let campus = s.campusId { Text(campus).font(.system(size: 12)).foregroundColor(.gray) }
+                                            }
+                                        }
+                                        Spacer()
+                                    }
+                                    .padding(10)
+                                }
+                                .buttonStyle(.plain)
+                                Divider().padding(.leading, 8)
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 220)
+                    .background(Color.white, in: RoundedRectangle(cornerRadius: 12))
+                    .padding(.horizontal, 16)
+                    .shadow(color: Color.black.opacity(0.06), radius: 8, x: 0, y: 4)
+                }
 
                 HStack(alignment: .center) {
                     LocationTypePill(
@@ -217,6 +255,18 @@ struct FloorPlanView: View {
                 consumePendingBuildingTarget()
             }
         }
+        .onChange(of: searchText) { newValue in
+            searchTask?.cancel()
+            let q = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard q.count >= 2 else {
+                floorService.suggestions = []
+                return
+            }
+            searchTask = Task {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                await floorService.searchGlobal(q)
+            }
+        }
         .onChange(of: vm.selectedFloor) { _ in
             if showFloorOverlay, let buildingId = currentBuildingId {
                 loadBuildingFloorData(buildingId: buildingId)
@@ -275,6 +325,25 @@ struct FloorPlanView: View {
         }
 
         Task {
+            do {
+                await floorService.searchGlobal(destination)
+                if let top = floorService.suggestions.first, let destSpaceId = Optional(top.id) {
+                    if let loc = userLocation {
+                        await navigationService.computeRoute(fromLatitude: loc.latitude, longitude: loc.longitude, to: destSpaceId)
+                        if let route = navigationService.currentRoute {
+                            let steps = route.steps.map { $0.instruction }
+                            await MainActor.run {
+                                routeDestination = RouteDestination(title: destination, subtitle: "Route ready", steps: steps)
+                                isResolvingRoute = false
+                            }
+                            return
+                        }
+                    }
+                }
+            } catch {
+                // to add
+            }
+
             do {
                 let answer = try await assistant.send(
                     userText: "Give me step-by-step directions to \(destination) from my current location.",
