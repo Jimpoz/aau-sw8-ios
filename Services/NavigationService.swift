@@ -7,6 +7,7 @@
 
 import Foundation
 import Combine
+import CoreLocation
 
 /// Service for computing routes and navigation
 class NavigationService: ObservableObject {
@@ -57,15 +58,21 @@ class NavigationService: ObservableObject {
             }
             
             let decoder = JSONDecoder()
-            let routeResult = try decoder.decode(NavigationResult.self, from: data)
-            
+            let serverRoute = try decoder.decode(ServerRoute.self, from: data)
+
+            // Map server steps into local NavigationStep objects with coordinates when available
+            let navSteps: [NavigationStep] = serverRoute.steps.enumerated().map { idx, s in
+                let instr = s.instruction ?? (idx == 0 ? "Start at \(s.display_name ?? s.space_id)" : "Go to \(s.display_name ?? s.space_id)")
+                return NavigationStep(instruction: instr, spaceId: s.space_id, stepNumber: idx + 1, lat: s.centroid_lat, lon: s.centroid_lng)
+            }
+
             DispatchQueue.main.async {
                 self.currentRoute = NavigationRoute(
-                    from: routeResult.start,
-                    to: routeResult.end,
-                    path: routeResult.path,
-                    totalDistance: routeResult.cost,
-                    steps: self.generateSteps(from: routeResult)
+                    from: serverRoute.from_space_id,
+                    to: serverRoute.to_space_id,
+                    path: serverRoute.steps.map { $0.space_id },
+                    totalDistance: serverRoute.total_cost,
+                    steps: navSteps
                 )
                 self.isLoading = false
             }
@@ -154,26 +161,7 @@ class NavigationService: ObservableObject {
         }
     }
     
-    private func generateSteps(from result: NavigationResult) -> [NavigationStep] {
-        var steps: [NavigationStep] = []
-        
-        // Turn path nodes into navigation steps
-        for (index, nodeId) in result.path.enumerated() {
-            let instruction = inferInstruction(
-                from: index == 0 ? nil : result.path[index - 1],
-                current: nodeId,
-                to: index < result.path.count - 1 ? result.path[index + 1] : nil
-            )
-            
-            steps.append(NavigationStep(
-                instruction: instruction,
-                spaceId: nodeId,
-                stepNumber: index + 1
-            ))
-        }
-        
-        return steps
-    }
+    // Legacy helper removed; server returns detailed steps with instructions and coordinates.
     
     private func inferInstruction(from prev: String?, current: String, to next: String?) -> String {
         if prev == nil {
@@ -188,11 +176,26 @@ class NavigationService: ObservableObject {
 
 // MARK: - Models
 
-struct NavigationResult: Decodable {
-    let start: String
-    let end: String
-    let path: [String]
-    let cost: Double
+// Server route decoding
+private struct ServerRouteStep: Decodable {
+    let space_id: String
+    let display_name: String?
+    let space_type: String?
+    let floor_index: Int?
+    let building_id: String?
+    let centroid_x: Double?
+    let centroid_y: Double?
+    let centroid_lat: Double?
+    let centroid_lng: Double?
+    let instruction: String?
+    let cost: Double?
+}
+
+private struct ServerRoute: Decodable {
+    let from_space_id: String
+    let to_space_id: String
+    let total_cost: Double
+    let steps: [ServerRouteStep]
 }
 
 struct NavigationRoute {
@@ -207,6 +210,13 @@ struct NavigationStep {
     let instruction: String
     let spaceId: String
     let stepNumber: Int
+    let lat: Double?
+    let lon: Double?
+
+    var coordinate: CLLocationCoordinate2D? {
+        guard let la = lat, let lo = lon else { return nil }
+        return CLLocationCoordinate2D(latitude: la, longitude: lo)
+    }
 }
 
 private struct NearestSpaceItem: Decodable {

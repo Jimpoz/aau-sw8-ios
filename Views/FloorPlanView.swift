@@ -30,6 +30,16 @@ final class MapActionProxy: ObservableObject {
         mv.setRegion(r, animated: true)
     }
 
+    func startFollowingUser() {
+        guard let mv = mapView else { return }
+        mv.userTrackingMode = .followWithHeading
+    }
+
+    func stopFollowingUser() {
+        guard let mv = mapView else { return }
+        mv.userTrackingMode = .none
+    }
+
     func centerOnUser() {
         guard let mv = mapView,
               let coord = mv.userLocation.location?.coordinate else { return }
@@ -60,6 +70,7 @@ struct FloorPlanView: View {
     @StateObject private var mapProxy    = MapActionProxy()
     @StateObject private var assistant   = AssistantService()
     @StateObject private var navigationService = NavigationService()
+    @State private var routeCoordinates: [CLLocationCoordinate2D] = []
     @StateObject private var locationManager = LocationManager()
 
     @State private var searchText        = ""
@@ -72,6 +83,7 @@ struct FloorPlanView: View {
     @State private var isAskingForDirections = false
     @State private var directionsPrompt = ""
     @State private var isResolvingRoute = false
+    @State private var isNavigating = false
 
     var body: some View {
         ZStack {
@@ -82,6 +94,7 @@ struct FloorPlanView: View {
                 showFloorOverlay: $showFloorOverlay,
                 rooms: floorService.rooms,
                 buildings: floorService.buildings,
+                routeCoordinates: routeCoordinates,
                 actionProxy: mapProxy,
                 onBuildingZoom: { buildingId in
                     let changedBuilding = (buildingId != self.currentBuildingId)
@@ -224,10 +237,17 @@ struct FloorPlanView: View {
                 .padding(.bottom,8)
 
                 if let dest = routeDestination {
-                    BottomRouteCard(destination: dest) {
+                    BottomRouteCard(destination: dest, onDismiss: {
                         routeDestination = nil
                         searchText = ""
-                    }
+                        if isNavigating {
+                            isNavigating = false
+                            mapProxy.stopFollowingUser()
+                        }
+                    }, onStartNavigation: {
+                        isNavigating = true
+                        mapProxy.startFollowingUser()
+                    })
                     .padding(.horizontal, 16)
                 }
             }
@@ -274,6 +294,14 @@ struct FloorPlanView: View {
         }
         .onChange(of: mapNav.pendingBuildingId) { _ in consumePendingBuildingTarget() }
         .onChange(of: floorService.buildings.count) { _ in consumePendingBuildingTarget() }
+        .onChange(of: navigationService.currentRoute) { route in
+            if let r = route {
+                let coords = r.steps.compactMap { $0.coordinate }
+                routeCoordinates = coords
+            } else {
+                routeCoordinates = []
+            }
+        }
         .onReceive(locationManager.$lastLocation) { _ in syncFromLocationManager() }
         .onReceive(locationManager.$horizontalAccuracyMeters) { _ in syncFromLocationManager() }
     }
@@ -478,6 +506,7 @@ struct MapViewWithOverlay: UIViewRepresentable {
     @Binding var showFloorOverlay: Bool
     let rooms: [Room]
     let buildings: [BuildingLocator]
+    let routeCoordinates: [CLLocationCoordinate2D]
     let actionProxy: MapActionProxy
     let onBuildingZoom: (String?) -> Void
     let onZoomOut: () -> Void
@@ -514,8 +543,17 @@ struct MapViewWithOverlay: UIViewRepresentable {
             uiView.setRegion(region, animated: false)
             context.coordinator.initialRegionSet = true
         }
-
+        // Remove existing overlays and re-add in desired order (route under polygons)
         uiView.removeOverlays(uiView.overlays)
+
+        // Route polyline (draw first so polygons appear on top)
+        if !routeCoordinates.isEmpty {
+            var coords = routeCoordinates
+            let poly = MKPolyline(coordinates: &coords, count: coords.count)
+            uiView.addOverlay(poly, level: .aboveRoads)
+        }
+
+        // Floor polygons
         let polygons = buildOverlays(for: rooms)
         let withGlobal = rooms.filter { ($0.polygonGlobal?.count ?? 0) >= 3 }.count
         print("[OVERLAY] showFloorOverlay=\(showFloorOverlay) rooms=\(rooms.count) withPolygonGlobal=\(withGlobal) → addOverlays=\(polygons.count)")
@@ -594,6 +632,14 @@ struct MapViewWithOverlay: UIViewRepresentable {
         }
 
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
+            if let polyline = overlay as? MKPolyline {
+                let r = MKPolylineRenderer(polyline: polyline)
+                r.strokeColor = UIColor.systemBlue
+                r.lineWidth = 5.0
+                r.lineJoin = .round
+                r.lineCap = .round
+                return r
+            }
             if let polygon = overlay as? MKPolygon {
                 let r = MKPolygonRenderer(polygon: polygon)
                 let color = uiColorForRoomType(polygon.title ?? "")
@@ -767,12 +813,26 @@ private struct ZoomControls: View {
 private struct BottomRouteCard: View {
     let destination: RouteDestination
     var onDismiss: () -> Void
+    var onStartNavigation: (() -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 12) {
             ZStack {
                 Capsule().fill(Color.gray.opacity(0.3)).frame(width: 44, height: 5)
                 HStack {
+                    if let start = onStartNavigation {
+                        Button(action: start) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "car.fill")
+                                    .font(.system(size: 13, weight: .bold))
+                                Text("Start")
+                                    .font(.system(size: 13, weight: .semibold))
+                            }
+                            .padding(8)
+                            .foregroundColor(.white)
+                            .background(Color.green, in: Capsule())
+                        }
+                    }
                     Spacer()
                     Button(action: onDismiss) {
                         Image(systemName: "xmark")
