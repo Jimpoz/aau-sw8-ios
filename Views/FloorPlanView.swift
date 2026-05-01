@@ -230,16 +230,31 @@ struct FloorPlanView: View {
 
     private func consumePendingBuildingTarget() {
         guard let pending = mapNav.pendingBuildingId else { return }
-        guard let building = floorService.buildings.first(where: { $0.id == pending }) else {
-            print("[NAV] pending building \(pending) not yet in locators (count=\(floorService.buildings.count)), waiting…")
+        if let building = floorService.buildings.first(where: { $0.id == pending }) {
+            print("[NAV] flying to building \(building.name) at \(building.coordinate) and loading floors directly")
+            mapProxy.flyTo(building.coordinate)
+            currentBuildingId = pending
+            floorService.rooms = []
+            showFloorOverlay = true
+            loadFloorsAndOverlay(buildingId: pending)
+            mapNav.pendingBuildingCoordinate = nil
+            mapNav.pendingBuildingId = nil
             return
         }
-        print("[NAV] flying to building \(building.name) at \(building.coordinate) and loading floors directly")
-        mapProxy.flyTo(building.coordinate)
-        currentBuildingId = pending
-        showFloorOverlay = true
-        loadFloorsAndOverlay(buildingId: pending)
-        mapNav.pendingBuildingId = nil
+
+        if let coord = mapNav.pendingBuildingCoordinate {
+            print("[NAV] fallback fly-to coordinate for building \(pending) -> \(coord)")
+            mapProxy.flyTo(coord)
+            currentBuildingId = pending
+            floorService.rooms = []
+            showFloorOverlay = true
+            loadFloorsAndOverlay(buildingId: pending)
+            mapNav.pendingBuildingCoordinate = nil
+            mapNav.pendingBuildingId = nil
+            return
+        }
+
+        print("[NAV] pending building \(pending) not yet in locators (count=\(floorService.buildings.count)), waiting…")
     }
 
     private func askForDirections() {

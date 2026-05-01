@@ -6,6 +6,8 @@
 //
 
 import SwiftUI
+import CoreLocation
+import Combine
 
 enum AppTab: Hashable {
     case floorPlan, assistant, camera, explore, profile
@@ -17,6 +19,7 @@ enum AppTab: Hashable {
 final class MapNavigationCoordinator: ObservableObject {
     @Published var selectedTab: AppTab = .floorPlan
     @Published var pendingBuildingId: String?
+    @Published var pendingBuildingCoordinate: CLLocationCoordinate2D?
 }
 
 struct ContentView: View {

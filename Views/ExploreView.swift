@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import CoreLocation
 
 struct ExploreView: View {
     @State private var selectedCampus: VisibleCampusDTO?
@@ -173,6 +174,11 @@ private struct BuildingsSection: View {
             VStack(spacing: 10) {
                 ForEach(buildings) { building in
                     Button {
+                        if let lat = building.origin_lat, let lng = building.origin_lng {
+                            mapNav.pendingBuildingCoordinate = CLLocationCoordinate2D(latitude: lat, longitude: lng)
+                        } else {
+                            mapNav.pendingBuildingCoordinate = nil
+                        }
                         mapNav.pendingBuildingId = building.id
                         mapNav.selectedTab = .floorPlan
                     } label: {

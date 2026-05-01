@@ -38,6 +38,8 @@ struct BuildingDTO: Identifiable, Codable, Hashable {
     let short_name: String?
     let address: String?
     let floor_count: Int?
+    let origin_lat: Double?
+    let origin_lng: Double?
 }
 
 @MainActor
@@ -112,7 +114,9 @@ final class OrganizationService: ObservableObject {
                     name: $0.name,
                     short_name: $0.short_name,
                     address: $0.address,
-                    floor_count: $0.floor_count ?? $0.floors?.count
+                    floor_count: $0.floor_count ?? $0.floors?.count,
+                    origin_lat: $0.origin_lat,
+                    origin_lng: $0.origin_lng
                 )
             }
         } catch {
@@ -154,6 +158,8 @@ private struct BuildingExportDTO: Decodable {
     let short_name: String?
     let address: String?
     let floor_count: Int?
+    let origin_lat: Double?
+    let origin_lng: Double?
     let floors: [FloorExportDTO]?
 }
 
