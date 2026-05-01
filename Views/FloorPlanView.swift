@@ -12,6 +12,7 @@ import Combine
 
 final class MapActionProxy: ObservableObject {
     weak var mapView: MKMapView?
+    var lastProgrammaticFly: Date? = nil
 
     func zoomIn() {
         guard let mv = mapView else { return }
@@ -42,6 +43,7 @@ final class MapActionProxy: ObservableObject {
             span: MKCoordinateSpan(latitudeDelta: 0.001, longitudeDelta: 0.001)
         )
         mv.setRegion(region, animated: true)
+        lastProgrammaticFly = Date()
     }
 }
 
@@ -232,8 +234,11 @@ struct FloorPlanView: View {
             print("[NAV] pending building \(pending) not yet in locators (count=\(floorService.buildings.count)), waiting…")
             return
         }
-        print("[NAV] flying to building \(building.name) at \(building.coordinate)")
+        print("[NAV] flying to building \(building.name) at \(building.coordinate) and loading floors directly")
         mapProxy.flyTo(building.coordinate)
+        currentBuildingId = pending
+        showFloorOverlay = true
+        loadFloorsAndOverlay(buildingId: pending)
         mapNav.pendingBuildingId = nil
     }
 
@@ -415,6 +420,7 @@ struct MapViewWithOverlay: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: MKMapView, context: Context) {
+        context.coordinator.parent = self
         if actionProxy.mapView == nil { actionProxy.mapView = uiView }
         if !context.coordinator.initialRegionSet {
             let region = MKCoordinateRegion(
@@ -465,7 +471,15 @@ struct MapViewWithOverlay: UIViewRepresentable {
 
         func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {
             let zoomLevel = mapView.region.span.latitudeDelta
+            if let last = parent.actionProxy.lastProgrammaticFly {
+                let elapsed = Date().timeIntervalSince(last)
+                if elapsed < 0.6 && zoomLevel < MapViewWithOverlay.indoorZoomThreshold {
+                    print("[PROX] ignoring proximity trigger due to recent programmatic fly (\(elapsed))")
+                    return
+                }
+            }
             guard zoomLevel < MapViewWithOverlay.indoorZoomThreshold else {
+                print("[PROX] zoom=\(zoomLevel) above threshold → onZoomOut")
                 parent.onZoomOut()
                 return
             }
@@ -491,8 +505,7 @@ struct MapViewWithOverlay: UIViewRepresentable {
             } else {
                 let nearestName = nearest?.0.name ?? "none"
                 let nearestDist = nearest.map { Int($0.1) } ?? -1
-                print("[PROX] zoom=\(zoomLevel) but nearest building \(nearestName) is \(nearestDist)m away (need <\(Int(MapViewWithOverlay.buildingProximityMeters))m), skipping overlay")
-                parent.onZoomOut()
+                print("[PROX] zoom=\(zoomLevel) zoomed-in but nearest building \(nearestName) is \(nearestDist)m away — keeping current overlay state (not auto-clearing)")
             }
         }
 
