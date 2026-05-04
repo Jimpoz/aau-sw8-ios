@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 import CoreImage.CIFilterBuiltins
 import CoreMotion
 
@@ -16,10 +17,24 @@ final class PedometerStats: ObservableObject {
 
     private let pedometer = CMPedometer()
 
+    private var motionUsageDescriptionConfigured: Bool {
+        let key = "NSMotionUsageDescription"
+        let value = Bundle.main.object(forInfoDictionaryKey: key) as? String
+        return value?.isEmpty == false
+    }
+
     func refresh() {
+        guard motionUsageDescriptionConfigured else {
+            print("[PEDOMETER] NSMotionUsageDescription missing from Info.plist — skipping query to avoid SIGTERM")
+            return
+        }
         guard CMPedometer.isStepCountingAvailable() else { return }
         let start = Calendar.current.startOfDay(for: Date())
-        pedometer.queryPedometerData(from: start, to: Date()) { [weak self] data, _ in
+        pedometer.queryPedometerData(from: start, to: Date()) { [weak self] data, error in
+            if let error {
+                print("[PEDOMETER] query failed: \(error.localizedDescription)")
+                return
+            }
             guard let self, let data else { return }
             Task { @MainActor in
                 self.stepsText = Self.numberFormatter.string(from: data.numberOfSteps) ?? "—"
