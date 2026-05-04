@@ -7,13 +7,45 @@
 
 import SwiftUI
 import CoreImage.CIFilterBuiltins
+import CoreMotion
+
+@MainActor
+final class PedometerStats: ObservableObject {
+    @Published var stepsText: String = "—"
+    @Published var distanceText: String = "—"
+
+    private let pedometer = CMPedometer()
+
+    func refresh() {
+        guard CMPedometer.isStepCountingAvailable() else { return }
+        let start = Calendar.current.startOfDay(for: Date())
+        pedometer.queryPedometerData(from: start, to: Date()) { [weak self] data, _ in
+            guard let self, let data else { return }
+            Task { @MainActor in
+                self.stepsText = Self.numberFormatter.string(from: data.numberOfSteps) ?? "—"
+                if let meters = data.distance?.doubleValue {
+                    self.distanceText = meters >= 1000
+                        ? String(format: "%.1f km", meters / 1000)
+                        : String(format: "%.0f m", meters)
+                }
+            }
+        }
+    }
+
+    private static let numberFormatter: NumberFormatter = {
+        let f = NumberFormatter()
+        f.numberStyle = .decimal
+        return f
+    }()
+}
 
 struct ProfileView: View {
     @EnvironmentObject private var themeSettings: ThemeSettings
     @EnvironmentObject private var authService: AuthService
-    @State private var avoidStairs: Bool = true
-    @State private var voiceGuidance: Bool = false
-    @State private var elevatorsOnly: Bool = false
+    @AppStorage("nav.avoidStairs")    private var avoidStairs: Bool = true
+    @AppStorage("nav.voiceGuidance")  private var voiceGuidance: Bool = false
+    @AppStorage("nav.elevatorsOnly")  private var elevatorsOnly: Bool = false
+    @StateObject private var pedometer = PedometerStats()
     @State private var showRoomPhotoUpload: Bool = false
     @State private var showMfaSetup: Bool = false
     @State private var showMfaDisable: Bool = false
@@ -62,8 +94,8 @@ struct ProfileView: View {
 
                 // Stats
                 HStack(spacing: 12) {
-                    StatCard(title: "Total Distance", value: "4.2 km")
-                    StatCard(title: "Steps", value: "5,430")
+                    StatCard(title: "Today's Distance", value: pedometer.distanceText)
+                    StatCard(title: "Today's Steps", value: pedometer.stepsText)
                 }
 
                 // Preferences
@@ -85,7 +117,7 @@ struct ProfileView: View {
                     }
                     .padding(16)
                 }
-                .background(.white, in: RoundedRectangle(cornerRadius: 20))
+                .background(Color.cardSurface, in: RoundedRectangle(cornerRadius: 20))
                 .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.slate100))
 
                 // Security
@@ -141,7 +173,7 @@ struct ProfileView: View {
                     }
                     .padding(16)
                 }
-                .background(.white, in: RoundedRectangle(cornerRadius: 20))
+                .background(Color.cardSurface, in: RoundedRectangle(cornerRadius: 20))
                 .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.slate100))
 
                 // Theme
@@ -168,7 +200,7 @@ struct ProfileView: View {
                     }
                     .padding(16)
                 }
-                .background(.white, in: RoundedRectangle(cornerRadius: 20))
+                .background(Color.cardSurface, in: RoundedRectangle(cornerRadius: 20))
                 .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.slate100))
 
                 Button {
@@ -183,7 +215,7 @@ struct ProfileView: View {
                     .foregroundStyle(Color.blue500)
                     .frame(maxWidth: .infinity)
                     .padding()
-                    .background(.white, in: RoundedRectangle(cornerRadius: 16))
+                    .background(Color.cardSurface, in: RoundedRectangle(cornerRadius: 16))
                     .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.blue500.opacity(0.2)))
                     .shadow(color: .black.opacity(0.04), radius: 8, x: 0, y: 4)
                 }
@@ -195,7 +227,7 @@ struct ProfileView: View {
                         .foregroundStyle(.red)
                         .frame(maxWidth: .infinity)
                         .padding()
-                        .background(.white, in: RoundedRectangle(cornerRadius: 16))
+                        .background(Color.cardSurface, in: RoundedRectangle(cornerRadius: 16))
                         .overlay(RoundedRectangle(cornerRadius: 16).stroke(.red.opacity(0.15)))
                         .shadow(color: .black.opacity(0.04), radius: 8, x: 0, y: 4)
                 }
@@ -220,6 +252,7 @@ struct ProfileView: View {
         }
         .task {
             try? await authService.refreshPrincipal()
+            pedometer.refresh()
         }
     }
 
@@ -242,7 +275,7 @@ private struct StatCard: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity)
-        .background(.white, in: RoundedRectangle(cornerRadius: 18))
+        .background(Color.cardSurface, in: RoundedRectangle(cornerRadius: 18))
         .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.slate100))
         .shadow(color: .black.opacity(0.05), radius: 10, x: 0, y: 6)
     }

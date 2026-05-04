@@ -198,7 +198,7 @@ private struct ServerRoute: Decodable {
     let steps: [ServerRouteStep]
 }
 
-struct NavigationRoute {
+struct NavigationRoute: Equatable {
     let from: String
     let to: String
     let path: [String]
@@ -206,7 +206,7 @@ struct NavigationRoute {
     let steps: [NavigationStep]
 }
 
-struct NavigationStep {
+struct NavigationStep: Equatable {
     let instruction: String
     let spaceId: String
     let stepNumber: Int

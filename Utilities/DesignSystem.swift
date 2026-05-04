@@ -7,32 +7,44 @@
 
 import SwiftUI
 
-// Color Palette for a somewhat decent looking UI
-extension Color {
-    // Slate
-    static let slate50   = Color(red: 248/255, green: 250/255, blue: 252/255)
-    static let slate100  = Color(red: 241/255, green: 245/255, blue: 249/255)
-    static let slate200  = Color(red: 226/255, green: 232/255, blue: 240/255)
-    static let slate300  = Color(red: 203/255, green: 213/255, blue: 225/255)
-    static let slate400  = Color(red: 148/255, green: 163/255, blue: 184/255)
-    static let slate500  = Color(red: 100/255, green: 116/255, blue: 139/255)
-    static let slate600  = Color(red: 71/255,  green: 85/255,  blue: 105/255)
-    static let slate700  = Color(red: 51/255,  green: 65/255,  blue: 85/255)
-    static let slate800  = Color(red: 30/255,  green: 41/255,  blue: 59/255)
-    static let slate900  = Color(red: 15/255,  green: 23/255,  blue: 42/255)
+private func adaptive(light: (Int, Int, Int), dark: (Int, Int, Int)) -> Color {
+    Color(uiColor: UIColor { trait in
+        let (r, g, b) = trait.userInterfaceStyle == .dark ? dark : light
+        return UIColor(red: CGFloat(r)/255, green: CGFloat(g)/255, blue: CGFloat(b)/255, alpha: 1)
+    })
+}
 
-    // Blue
-    static let blue50    = Color(red: 239/255, green: 246/255, blue: 255/255)
-    static let blue100   = Color(red: 219/255, green: 234/255, blue: 254/255)
-    static let blue200   = Color(red: 191/255, green: 219/255, blue: 254/255)
-    static let blue300   = Color(red: 147/255, green: 197/255, blue: 253/255)
-    static let blue400   = Color(red: 96/255,  green: 165/255, blue: 250/255)
-    static let blue500   = Color(red: 59/255,  green: 130/255, blue: 246/255)
-    static let blue600   = Color(red: 37/255,  green: 99/255,  blue: 235/255)
-    static let blue700   = Color(red: 29/255,  green: 78/255,  blue: 216/255)
+extension Color {
+    // Slate — flipped in dark mode so 50 (lightest in light) becomes near-black,
+    // 800 (darkest in light) becomes near-white, etc.
+    static let slate50   = adaptive(light: (248,250,252), dark: (15, 23, 42))
+    static let slate100  = adaptive(light: (241,245,249), dark: (30, 41, 59))
+    static let slate200  = adaptive(light: (226,232,240), dark: (51, 65, 85))
+    static let slate300  = adaptive(light: (203,213,225), dark: (71, 85, 105))
+    static let slate400  = adaptive(light: (148,163,184), dark: (148,163,184))
+    static let slate500  = adaptive(light: (100,116,139), dark: (148,163,184))
+    static let slate600  = adaptive(light: (71, 85, 105), dark: (203,213,225))
+    static let slate700  = adaptive(light: (51, 65, 85),  dark: (226,232,240))
+    static let slate800  = adaptive(light: (30, 41, 59),  dark: (241,245,249))
+    static let slate900  = adaptive(light: (15, 23, 42),  dark: (248,250,252))
+
+    // Blue — kept consistent; small darken in dark mode to avoid glow.
+    static let blue50    = adaptive(light: (239,246,255), dark: (29, 51,  98))
+    static let blue100   = adaptive(light: (219,234,254), dark: (37, 60,  120))
+    static let blue200   = adaptive(light: (191,219,254), dark: (47, 82,  150))
+    static let blue300   = adaptive(light: (147,197,253), dark: (96, 165, 250))
+    static let blue400   = adaptive(light: (96, 165,250), dark: (96, 165, 250))
+    static let blue500   = adaptive(light: (59, 130,246), dark: (96, 165, 250))
+    static let blue600   = adaptive(light: (37, 99, 235), dark: (59, 130, 246))
+    static let blue700   = adaptive(light: (29, 78, 216), dark: (37, 99,  235))
 
     // Status
     static let success   = Color(red: 34/255,  green: 197/255, blue: 94/255)
+
+    // Card surface that reads as white in light mode and dark slate in dark mode.
+    // Use this in place of hardcoded `.white` for any card background that
+    // should adapt to the user's color scheme.
+    static let cardSurface = adaptive(light: (255,255,255), dark: (24, 33,  54))
 }
 
 // Effects

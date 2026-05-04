@@ -17,9 +17,12 @@ final class AssistantService: NSObject, ObservableObject, LLMChatting {
     struct ChatRequest: Codable {
         let user_query: String
         let campus_id: String
+        let building_id: String?
+        let user_lat: Double?
+        let user_lon: Double?
         let current_location_space_id: String?
         let current_location_coords: CoordinateData?
-        
+
         struct CoordinateData: Codable {
             let x: Double
             let y: Double
@@ -31,11 +34,6 @@ final class AssistantService: NSObject, ObservableObject, LLMChatting {
         let sources: [String]
     }
     
-    /// Initialize assistant service with backend configuration
-    /// - Parameters:
-    ///   - backendURL: Base URL of the spatial backend (e.g., "http://localhost:8000")
-    ///   - campusId: Campus identifier
-    ///   - session: URLSession for networking (default creates new configured session)
     init(
         backendURL: String = AppSecrets.backendURL,
         campusId: String = "campus_001",
@@ -52,32 +50,26 @@ final class AssistantService: NSObject, ObservableObject, LLMChatting {
         super.init()
     }
     
-    /// Send a chat message to the assistant
-    /// - Parameters:
-    ///   - userText: The user's question or input
-    ///   - context: Optional context containing location and other metadata
-    ///     - "space_id": Current location space ID (String)
-    ///     - "x": X coordinate (Double)
-    ///     - "y": Y coordinate (Double)
-    /// - Returns: Assistant's response text
-    /// - Throws: NetworkError or DecodingError if request fails
     func send(userText: String, context: [String : Any]) async throws -> String {
         // Extract location from context if available
         let spaceId = context["space_id"] as? String
+        let buildingId = context["building_id"] as? String
         let x = context["x"] as? Double
         let y = context["y"] as? Double
-        
+
         let coords: ChatRequest.CoordinateData?
         if let x = x, let y = y {
             coords = ChatRequest.CoordinateData(x: x, y: y)
         } else {
             coords = nil
         }
-        
-        // Build request
+
         let request = ChatRequest(
             user_query: userText,
             campus_id: campusId,
+            building_id: buildingId,
+            user_lat: y,
+            user_lon: x,
             current_location_space_id: spaceId,
             current_location_coords: coords
         )

@@ -137,6 +137,17 @@ struct FloorPlanView: View {
 
         .safeAreaInset(edge: .top) {
             VStack(spacing: 6) {
+                if let upcoming = nextStep() {
+                    NextStepBanner(
+                        instruction: upcoming.step.instruction,
+                        distanceMeters: upcoming.distance,
+                        remainingSteps: upcoming.remaining,
+                        onCancel: cancelRoute
+                    )
+                    .padding(.horizontal, 16)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+
                 SearchBar(text: $searchText, onSearch: handleSearch)
                     .padding(.horizontal, 16)
 
@@ -295,15 +306,67 @@ struct FloorPlanView: View {
         .onChange(of: mapNav.pendingBuildingId) { _ in consumePendingBuildingTarget() }
         .onChange(of: floorService.buildings.count) { _ in consumePendingBuildingTarget() }
         .onChange(of: navigationService.currentRoute) { route in
-            if let r = route {
-                let coords = r.steps.compactMap { $0.coordinate }
-                routeCoordinates = coords
-            } else {
-                routeCoordinates = []
-            }
+            rebuildRouteCoordinates(route)
+        }
+        .onReceive(locationManager.$lastLocation) { _ in
+            rebuildRouteCoordinates(navigationService.currentRoute)
         }
         .onReceive(locationManager.$lastLocation) { _ in syncFromLocationManager() }
         .onReceive(locationManager.$horizontalAccuracyMeters) { _ in syncFromLocationManager() }
+    }
+
+    private func nextStep() -> (step: NavigationStep, distance: CLLocationDistance, remaining: Int)? {
+        guard let route = navigationService.currentRoute, !route.steps.isEmpty,
+              let user = userLocation else { return nil }
+        let arrivalRadius: CLLocationDistance = 5
+        let userLoc = CLLocation(latitude: user.latitude, longitude: user.longitude)
+
+        var upcoming: NavigationStep?
+        var upcomingDistance: CLLocationDistance = .greatestFiniteMagnitude
+        var remaining = 0
+
+        for step in route.steps {
+            guard let coord = step.coordinate else { continue }
+            let d = userLoc.distance(from: CLLocation(latitude: coord.latitude, longitude: coord.longitude))
+            if d > arrivalRadius {
+                if upcoming == nil {
+                    upcoming = step
+                    upcomingDistance = d
+                }
+                remaining += 1
+            }
+        }
+        guard let upcoming else { return nil }
+        return (upcoming, upcomingDistance, remaining)
+    }
+
+    private func cancelRoute() {
+        navigationService.currentRoute = nil
+        routeCoordinates = []
+        routeDestination = nil
+    }
+
+    private func rebuildRouteCoordinates(_ route: NavigationRoute?) {
+        guard let r = route else { routeCoordinates = []; return }
+        let stepCoords = r.steps.compactMap { $0.coordinate }
+        if let user = userLocation {
+            routeCoordinates = [user] + stepCoords
+        } else {
+            routeCoordinates = stepCoords
+        }
+    }
+
+    private func nearestVisibleBuilding() -> (building: BuildingLocator, distance: CLLocationDistance)? {
+        guard let user = userLocation, !floorService.buildings.isEmpty else { return nil }
+        let userLoc = CLLocation(latitude: user.latitude, longitude: user.longitude)
+        var best: (BuildingLocator, CLLocationDistance)?
+        for b in floorService.buildings {
+            let d = userLoc.distance(from: CLLocation(
+                latitude: b.coordinate.latitude, longitude: b.coordinate.longitude
+            ))
+            if best == nil || d < best!.1 { best = (b, d) }
+        }
+        return best.map { ($0.0, $0.1) }
     }
 
     private func consumePendingBuildingTarget() {
@@ -343,6 +406,19 @@ struct FloorPlanView: View {
     }
 
     private func resolveRoute(to destination: String) {
+        if let nearest = nearestVisibleBuilding(), nearest.distance > 80 {
+            routeDestination = RouteDestination(
+                title: destination,
+                subtitle: "You're outside any indoor space",
+                steps: [
+                    "Indoor directions are only available once you're at or inside a building.",
+                    "The closest mapped building is \(nearest.building.name), about \(Int(nearest.distance))m away.",
+                    "Use the world map to walk there first, then ask again."
+                ]
+            )
+            return
+        }
+
         routeDestination = RouteDestination(title: destination, subtitle: "Calculating route…", steps: [])
         isResolvingRoute = true
 
@@ -350,6 +426,9 @@ struct FloorPlanView: View {
         if let loc = userLocation {
             context["x"] = loc.longitude
             context["y"] = loc.latitude
+        }
+        if let bid = currentBuildingId {
+            context["building_id"] = bid
         }
 
         Task {
@@ -369,7 +448,7 @@ struct FloorPlanView: View {
                     }
                 }
             } catch {
-                // to add
+                print("[ROUTE] indoor route lookup failed: \(error.localizedDescription); falling back to assistant")
             }
 
             do {
@@ -543,29 +622,28 @@ struct MapViewWithOverlay: UIViewRepresentable {
             uiView.setRegion(region, animated: false)
             context.coordinator.initialRegionSet = true
         }
-        // Remove existing overlays and re-add in desired order (route under polygons)
         uiView.removeOverlays(uiView.overlays)
-
-        // Route polyline (draw first so polygons appear on top)
-        if !routeCoordinates.isEmpty {
-            var coords = routeCoordinates
-            let poly = MKPolyline(coordinates: &coords, count: coords.count)
-            uiView.addOverlay(poly, level: .aboveRoads)
-        }
-
-        // Floor polygons
+        uiView.removeAnnotations(uiView.annotations.filter { !($0 is MKUserLocation) })
         let polygons = buildOverlays(for: rooms)
         let withGlobal = rooms.filter { ($0.polygonGlobal?.count ?? 0) >= 3 }.count
         print("[OVERLAY] showFloorOverlay=\(showFloorOverlay) rooms=\(rooms.count) withPolygonGlobal=\(withGlobal) → addOverlays=\(polygons.count)")
         if showFloorOverlay && !polygons.isEmpty {
             uiView.addOverlays(polygons, level: .aboveLabels)
-            if let first = polygons.first as? MKPolygon {
-                let rect = polygons.reduce(first.boundingMapRect) { $0.union($1.boundingMapRect) }
-                let padded = rect.insetBy(dx: -rect.size.width * 0.4, dy: -rect.size.height * 0.4)
-                if !uiView.visibleMapRect.contains(rect) {
-                    print("[OVERLAY] visibleMapRect does not contain polygons; current span=\(uiView.region.span.latitudeDelta)")
-                }
-                _ = padded
+        }
+
+        if routeCoordinates.count >= 2 {
+            var coords = routeCoordinates
+            let halo = MKPolyline(coordinates: &coords, count: coords.count)
+            halo.title = "route-halo"
+            let main = MKPolyline(coordinates: &coords, count: coords.count)
+            main.title = "route-main"
+            uiView.addOverlay(halo, level: .aboveLabels)
+            uiView.addOverlay(main, level: .aboveLabels)
+            if let last = routeCoordinates.last {
+                let pin = MKPointAnnotation()
+                pin.coordinate = last
+                pin.title = "Destination"
+                uiView.addAnnotation(pin)
             }
         }
     }
@@ -634,8 +712,13 @@ struct MapViewWithOverlay: UIViewRepresentable {
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
             if let polyline = overlay as? MKPolyline {
                 let r = MKPolylineRenderer(polyline: polyline)
-                r.strokeColor = UIColor.systemBlue
-                r.lineWidth = 5.0
+                if polyline.title == "route-halo" {
+                    r.strokeColor = UIColor.white.withAlphaComponent(0.95)
+                    r.lineWidth = 9.0
+                } else {
+                    r.strokeColor = UIColor.systemBlue
+                    r.lineWidth = 5.0
+                }
                 r.lineJoin = .round
                 r.lineCap = .round
                 return r
@@ -690,6 +773,64 @@ class FloorPlanOverlayRenderer: MKOverlayRenderer {
     override func draw(_ mapRect: MKMapRect, zoomScale: MKZoomScale, in context: CGContext) {}
 }
 
+
+private struct NextStepBanner: View {
+    let instruction: String
+    let distanceMeters: CLLocationDistance
+    let remainingSteps: Int
+    let onCancel: () -> Void
+
+    private var distanceLabel: String {
+        if distanceMeters < 10 { return "Now" }
+        if distanceMeters < 1000 { return "In \(Int(distanceMeters)) m" }
+        return String(format: "In %.1f km", distanceMeters / 1000)
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: "arrow.turn.up.right")
+                .font(.system(size: 22, weight: .heavy))
+                .foregroundStyle(.white)
+                .frame(width: 44, height: 44)
+                .background(.white.opacity(0.18), in: Circle())
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(distanceLabel)
+                    .font(.system(size: 12, weight: .heavy))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .textCase(.uppercase)
+                Text(instruction)
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(.white)
+                    .lineLimit(2)
+                Text("\(remainingSteps) step\(remainingSteps == 1 ? "" : "s") left")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.75))
+            }
+
+            Spacer(minLength: 8)
+
+            Button(action: onCancel) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 13, weight: .heavy))
+                    .foregroundStyle(.white)
+                    .padding(8)
+                    .background(.white.opacity(0.18), in: Circle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(12)
+        .background(
+            LinearGradient(
+                colors: [Color(red: 0.10, green: 0.36, blue: 0.86),
+                         Color(red: 0.07, green: 0.27, blue: 0.70)],
+                startPoint: .topLeading, endPoint: .bottomTrailing
+            ),
+            in: RoundedRectangle(cornerRadius: 16)
+        )
+        .shadow(color: .black.opacity(0.18), radius: 12, x: 0, y: 8)
+    }
+}
 
 private struct SearchBar: View {
     @Binding var text: String
