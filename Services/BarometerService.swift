@@ -47,19 +47,21 @@ final class BarometerService: ObservableObject {
         self.isAvailable = true
 
         altimeter.startRelativeAltitudeUpdates(to: .main) { [weak self] data, error in
-            guard let self else { return }
             if let error {
                 print("[BAROMETER] update error: \(error.localizedDescription)")
                 return
             }
             guard let data else { return }
             let r = data.relativeAltitude.doubleValue
-            self.relativeAltitudeMeters = r
-            if self.baselineRelativeAltitude == nil {
-                self.baselineRelativeAltitude = r
-                return
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.relativeAltitudeMeters = r
+                if self.baselineRelativeAltitude == nil {
+                    self.baselineRelativeAltitude = r
+                    return
+                }
+                self.recomputeFloorIndex(currentRelativeAltitude: r)
             }
-            self.recomputeFloorIndex(currentRelativeAltitude: r)
         }
     }
 
