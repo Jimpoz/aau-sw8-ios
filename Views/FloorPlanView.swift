@@ -72,6 +72,7 @@ struct FloorPlanView: View {
     @StateObject private var navigationService = NavigationService()
     @State private var routeCoordinates: [CLLocationCoordinate2D] = []
     @StateObject private var locationManager = LocationManager()
+    @StateObject private var barometer       = BarometerService()
 
     @State private var searchText        = ""
     @State private var searchTask: Task<Void, Never>? = nil
@@ -111,6 +112,10 @@ struct FloorPlanView: View {
                 onZoomOut: {
                     self.showFloorOverlay  = false
                     self.currentBuildingId = nil
+                    // No active building → no point burning battery on
+                    // a barometer subscription whose readings nothing
+                    // will consume.
+                    barometer.stop()
                 }
             )
             .ignoresSafeArea()
@@ -313,6 +318,16 @@ struct FloorPlanView: View {
         }
         .onReceive(locationManager.$lastLocation) { _ in syncFromLocationManager() }
         .onReceive(locationManager.$horizontalAccuracyMeters) { _ in syncFromLocationManager() }
+        .onChange(of: barometer.currentFloorIndex) { newFloor in
+            guard let newFloor,
+                  let labels = vm.availableFloorLabels,
+                  let summaries = floorService.floors as [FloorSummary]?,
+                  let idx = summaries.firstIndex(where: { $0.floorIndex == newFloor }),
+                  vm.selectedFloor != idx,
+                  idx < labels.count else { return }
+            print("[FLOORPLAN] auto-switch to floor \(newFloor) from barometer")
+            vm.selectedFloor = idx
+        }
     }
 
     private func nextStep() -> (step: NavigationStep, distance: CLLocationDistance, remaining: Int)? {
@@ -498,6 +513,7 @@ struct FloorPlanView: View {
                     let groundIndex = summaries.firstIndex { $0.floorIndex == 0 } ?? 0
                     vm.selectedFloor = groundIndex
                 }
+                barometer.start(floors: summaries, baselineFloorIndex: 0)
             }
             if let active = activeFloorId(in: summaries) {
                 await floorService.fetchFloorGeometry(floorId: active)
@@ -574,6 +590,9 @@ struct FloorPlanView: View {
     private func selectLabel(_ label: String) {
         if let labels = vm.availableFloorLabels, let idx = labels.firstIndex(of: label) {
             vm.selectedFloor = idx
+            if floorService.floors.indices.contains(idx) {
+                barometer.recalibrate(toFloorIndex: floorService.floors[idx].floorIndex)
+            }
         }
     }
 }

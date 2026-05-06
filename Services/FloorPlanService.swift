@@ -41,6 +41,7 @@ struct FloorSummary: Identifiable, Hashable {
     let id: String
     let floorIndex: Int
     let displayName: String?
+    let elevationMeters: Double?
 }
 
 /// Service for fetching floor plan geometry and building data
@@ -137,7 +138,12 @@ class FloorPlanService: ObservableObject {
             let items = try JSONDecoder().decode([FloorListItem].self, from: data)
             let summaries = items
                 .sorted { $0.floor_index < $1.floor_index }
-                .map { FloorSummary(id: $0.id, floorIndex: $0.floor_index, displayName: $0.display_name) }
+                .map { FloorSummary(
+                    id: $0.id,
+                    floorIndex: $0.floor_index,
+                    displayName: $0.display_name,
+                    elevationMeters: $0.elevation_m
+                ) }
             await MainActor.run { self.floors = summaries }
             return summaries
         } catch {
@@ -272,6 +278,7 @@ private struct FloorListItem: Decodable {
     let id: String
     let floor_index: Int
     let display_name: String?
+    let elevation_m: Double?
 }
 
 private struct VisibleBuildingItem: Decodable {
