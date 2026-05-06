@@ -2,19 +2,18 @@
 //  BarometerService.swift
 //  aau-sw8-ios
 //  Created by jimpo on 17/02/26.
-// 
+//
 
 import Foundation
 import Combine
 import CoreMotion
 
-@MainActor
 final class BarometerService: ObservableObject {
     @Published private(set) var currentFloorIndex: Int?
     @Published private(set) var relativeAltitudeMeters: Double?
     @Published private(set) var isAvailable: Bool = false
 
-    private let altimeter = CMAltimeter()
+    private var altimeter: CMAltimeter?
     private var floors: [FloorSummary] = []
     private var baselineRelativeAltitude: Double?
     private var baselineFloorElevation: Double?
@@ -28,33 +27,40 @@ final class BarometerService: ObservableObject {
 
     func start(floors: [FloorSummary], baselineFloorIndex: Int = 0) {
         guard motionUsageDescriptionConfigured else {
-            print("[BAROMETER] NSMotionUsageDescription missing — skipping start to avoid SIGTERM")
+            print("[BAROMETER] NSMotionUsageDescription missing — skipping start to avoid abort_with_payload")
             return
         }
         guard CMAltimeter.isRelativeAltitudeAvailable() else {
             print("[BAROMETER] device has no barometer — disabling")
-            isAvailable = false
+            DispatchQueue.main.async { self.isAvailable = false }
             return
         }
-        altimeter.stopRelativeAltitudeUpdates()
+
+        let alt = altimeter ?? CMAltimeter()
+        altimeter = alt
+        alt.stopRelativeAltitudeUpdates()
 
         self.floors = floors
         let anchor = floors.first(where: { $0.floorIndex == baselineFloorIndex })
                   ?? floors.first
         self.baselineFloorElevation = anchor?.elevationMeters ?? 0
         self.baselineRelativeAltitude = nil   // captured on the first sample
-        self.currentFloorIndex = anchor?.floorIndex
-        self.isAvailable = true
 
-        altimeter.startRelativeAltitudeUpdates(to: .main) { [weak self] data, error in
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.currentFloorIndex = anchor?.floorIndex
+            self.isAvailable = true
+        }
+
+        alt.startRelativeAltitudeUpdates(to: .main) { [weak self] data, error in
+            guard let self else { return }
             if let error {
                 print("[BAROMETER] update error: \(error.localizedDescription)")
                 return
             }
             guard let data else { return }
             let r = data.relativeAltitude.doubleValue
-            Task { @MainActor [weak self] in
-                guard let self else { return }
+            DispatchQueue.main.async {
                 self.relativeAltitudeMeters = r
                 if self.baselineRelativeAltitude == nil {
                     self.baselineRelativeAltitude = r
@@ -66,11 +72,13 @@ final class BarometerService: ObservableObject {
     }
 
     func stop() {
-        altimeter.stopRelativeAltitudeUpdates()
+        altimeter?.stopRelativeAltitudeUpdates()
         baselineRelativeAltitude = nil
         baselineFloorElevation = nil
-        currentFloorIndex = nil
-        relativeAltitudeMeters = nil
+        DispatchQueue.main.async { [weak self] in
+            self?.currentFloorIndex = nil
+            self?.relativeAltitudeMeters = nil
+        }
     }
 
     func recalibrate(toFloorIndex newIndex: Int) {
@@ -78,7 +86,9 @@ final class BarometerService: ObservableObject {
         guard let anchor = floors.first(where: { $0.floorIndex == newIndex }) else { return }
         baselineRelativeAltitude = r
         baselineFloorElevation = anchor.elevationMeters ?? 0
-        currentFloorIndex = newIndex
+        DispatchQueue.main.async { [weak self] in
+            self?.currentFloorIndex = newIndex
+        }
         print("[BAROMETER] recalibrated to floor \(newIndex) at relative altitude \(String(format: "%.2f", r))m")
     }
 
