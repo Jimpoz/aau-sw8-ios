@@ -230,6 +230,18 @@ final class AuthService: ObservableObject {
         self.principal = nil
     }
 
+    func deleteAccount(password: String) async throws {
+        let token = try requireToken()
+        try await sendNoBody(
+            method: "DELETE",
+            path: "auth/me",
+            body: ["password": password],
+            bearer: token
+        )
+        Keychain.deleteJWT()
+        self.principal = nil
+    }
+
     private func requireToken() throws -> String {
         guard let token = Keychain.loadJWT() else {
             throw AuthError.unauthorized("Not signed in")
@@ -308,8 +320,17 @@ final class AuthService: ObservableObject {
         body: [String: Any],
         bearer: String? = nil
     ) async throws {
+        try await sendNoBody(method: "POST", path: path, body: body, bearer: bearer)
+    }
+
+    private func sendNoBody(
+        method: String,
+        path: String,
+        body: [String: Any],
+        bearer: String? = nil
+    ) async throws {
         var request = URLRequest(url: baseURL.appendingPathComponent(path))
-        request.httpMethod = "POST"
+        request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(AppSecrets.apiSecret, forHTTPHeaderField: "X-Api-Key")

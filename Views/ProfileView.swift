@@ -65,6 +65,7 @@ struct ProfileView: View {
     @State private var showMfaSetup: Bool = false
     @State private var showMfaDisable: Bool = false
     @State private var showPasswordRecovery: Bool = false
+    @State private var showDeleteAccount: Bool = false
 
     private var displayName: String {
         authService.principal?.fullName?.isEmpty == false
@@ -246,6 +247,16 @@ struct ProfileView: View {
                         .overlay(RoundedRectangle(cornerRadius: 16).stroke(.red.opacity(0.15)))
                         .shadow(color: .black.opacity(0.04), radius: 8, x: 0, y: 4)
                 }
+
+                Button(role: .destructive) { showDeleteAccount = true } label: {
+                    Text("Delete Profile")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.red, in: RoundedRectangle(cornerRadius: 16))
+                        .shadow(color: .red.opacity(0.25), radius: 8, x: 0, y: 4)
+                }
             }
             .padding(.horizontal, 16)
         }
@@ -263,6 +274,10 @@ struct ProfileView: View {
         }
         .sheet(isPresented: $showPasswordRecovery) {
             PasswordRecoverySheet()
+                .environmentObject(authService)
+        }
+        .sheet(isPresented: $showDeleteAccount) {
+            DeleteAccountSheet()
                 .environmentObject(authService)
         }
         .task {
@@ -628,6 +643,78 @@ private struct MfaDisableSheet: View {
             dismiss()
         } catch {
             errorText = (error as? LocalizedError)?.errorDescription ?? "Could not disable MFA"
+        }
+    }
+}
+
+private struct DeleteAccountSheet: View {
+    @EnvironmentObject private var authService: AuthService
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var password: String = ""
+    @State private var errorText: String?
+    @State private var submitting = false
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Delete your profile")
+                    .font(.system(size: 20, weight: .bold))
+                Text("This permanently removes your account, organization memberships, and password recovery tokens. Indoor map data is not affected. You will be signed out on this device.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Color.slate500)
+                Text("This cannot be undone.")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.red)
+
+                SecureField("Password", text: $password)
+                    .textContentType(.password)
+                    .padding(14)
+                    .background(Color.slate50, in: RoundedRectangle(cornerRadius: 12))
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.slate100))
+
+                if let errorText {
+                    Text(errorText).font(.system(size: 13)).foregroundStyle(.red)
+                }
+
+                Button {
+                    Task { await submit() }
+                } label: {
+                    HStack {
+                        if submitting { ProgressView().tint(.white) }
+                        Text(submitting ? "Deleting…" : "Delete my profile")
+                            .font(.system(size: 16, weight: .semibold))
+                    }
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(.red, in: RoundedRectangle(cornerRadius: 12))
+                }
+                .disabled(submitting || password.isEmpty)
+                .opacity(password.isEmpty ? 0.6 : 1.0)
+
+                Spacer()
+            }
+            .padding(20)
+            .navigationTitle("Delete profile")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func submit() async {
+        errorText = nil
+        submitting = true
+        defer { submitting = false }
+        do {
+            try await authService.deleteAccount(password: password)
+            dismiss()
+        } catch {
+            errorText = (error as? LocalizedError)?.errorDescription ?? "Could not delete profile"
         }
     }
 }
