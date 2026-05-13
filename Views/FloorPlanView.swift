@@ -80,7 +80,9 @@ struct FloorPlanView: View {
     @State private var locationAccuracy: Double?
     @State private var showFloorOverlay  = false
     @State private var currentBuildingId: String?
+    @State private var currentBuildingCoordinate: CLLocationCoordinate2D?
     @State private var lastBuildingId: String?
+    @State private var lastBuildingCoordinate: CLLocationCoordinate2D?
     @State private var routeDestination: RouteDestination?
     @State private var isAskingForDirections = false
     @State private var directionsPrompt = ""
@@ -99,24 +101,26 @@ struct FloorPlanView: View {
                 routeCoordinates: routeCoordinates,
                 actionProxy: mapProxy,
                 lastBuildingId: lastBuildingId,
-                onBuildingZoom: { buildingId in
+                lastBuildingCoordinate: lastBuildingCoordinate,
+                onBuildingZoom: { buildingId, buildingCoord in
                     let changedBuilding = (buildingId != self.currentBuildingId)
                     self.currentBuildingId = buildingId
+                    self.currentBuildingCoordinate = buildingCoord
                     self.showFloorOverlay  = true
-                    if let buildingId {
-                        if changedBuilding {
-                            loadFloorsAndOverlay(buildingId: buildingId)
-                        } else {
-                            loadBuildingFloorData(buildingId: buildingId)
-                        }
+                    if changedBuilding {
+                        loadFloorsAndOverlay(buildingId: buildingId)
+                    } else {
+                        loadBuildingFloorData(buildingId: buildingId)
                     }
                 },
                 onZoomOut: {
                     if let cur = self.currentBuildingId {
                         self.lastBuildingId = cur
+                        self.lastBuildingCoordinate = self.currentBuildingCoordinate
                     }
                     self.showFloorOverlay  = false
                     self.currentBuildingId = nil
+                    self.currentBuildingCoordinate = nil
                     barometer.stop()
                 }
             )
@@ -392,6 +396,7 @@ struct FloorPlanView: View {
             print("[NAV] flying to building \(building.name) at \(building.coordinate) and loading floors directly")
             mapProxy.flyTo(building.coordinate)
             currentBuildingId = pending
+            currentBuildingCoordinate = building.coordinate
             floorService.rooms = []
             showFloorOverlay = true
             loadFloorsAndOverlay(buildingId: pending)
@@ -404,6 +409,7 @@ struct FloorPlanView: View {
             print("[NAV] fallback fly-to coordinate for building \(pending) -> \(coord)")
             mapProxy.flyTo(coord)
             currentBuildingId = pending
+            currentBuildingCoordinate = coord
             floorService.rooms = []
             showFloorOverlay = true
             loadFloorsAndOverlay(buildingId: pending)
@@ -609,7 +615,8 @@ struct MapViewWithOverlay: UIViewRepresentable {
     let routeCoordinates: [CLLocationCoordinate2D]
     let actionProxy: MapActionProxy
     let lastBuildingId: String?
-    let onBuildingZoom: (String?) -> Void
+    let lastBuildingCoordinate: CLLocationCoordinate2D?
+    let onBuildingZoom: (String, CLLocationCoordinate2D) -> Void
     let onZoomOut: () -> Void
 
     private static let indoorZoomThreshold = 0.005
@@ -728,18 +735,13 @@ struct MapViewWithOverlay: UIViewRepresentable {
             }
 
             if onScreen.isEmpty {
-                if let last = parent.lastBuildingId {
-                    print("[PROX] zoom=\(zoomLevel) no buildings in rect → restoring last \(last)")
-                    parent.onBuildingZoom(last)
-                    return
-                }
-
-                if let nearest = parent.buildings.min(by: {
-                    center.distance(from: CLLocation(latitude: $0.coordinate.latitude, longitude: $0.coordinate.longitude)) <
-                    center.distance(from: CLLocation(latitude: $1.coordinate.latitude, longitude: $1.coordinate.longitude))
-                }) {
-                    print("[PROX] zoom=\(zoomLevel) no buildings in rect, no last → nearest \(nearest.name)")
-                    parent.onBuildingZoom(nearest.id)
+                if let last = parent.lastBuildingId,
+                   let lastCoord = parent.lastBuildingCoordinate,
+                   paddedRect.contains(MKMapPoint(lastCoord)) {
+                    print("[PROX] zoom=\(zoomLevel) no locators in view, last building's coord in rect → restoring \(last)")
+                    parent.onBuildingZoom(last, lastCoord)
+                } else {
+                    print("[PROX] zoom=\(zoomLevel) no locators in view; last building not in rect — not restoring")
                 }
                 return
             }
@@ -754,7 +756,7 @@ struct MapViewWithOverlay: UIViewRepresentable {
                 pick = nearest.0
                 print("[PROX] zoom=\(zoomLevel) → \(pick.name) at \(Int(nearest.1))m centre, in view")
             }
-            parent.onBuildingZoom(pick.id)
+            parent.onBuildingZoom(pick.id, pick.coordinate)
         }
 
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
