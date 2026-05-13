@@ -80,6 +80,7 @@ struct FloorPlanView: View {
     @State private var locationAccuracy: Double?
     @State private var showFloorOverlay  = false
     @State private var currentBuildingId: String?
+    @State private var lastBuildingId: String?
     @State private var routeDestination: RouteDestination?
     @State private var isAskingForDirections = false
     @State private var directionsPrompt = ""
@@ -97,6 +98,7 @@ struct FloorPlanView: View {
                 buildings: floorService.buildings,
                 routeCoordinates: routeCoordinates,
                 actionProxy: mapProxy,
+                lastBuildingId: lastBuildingId,
                 onBuildingZoom: { buildingId in
                     let changedBuilding = (buildingId != self.currentBuildingId)
                     self.currentBuildingId = buildingId
@@ -110,11 +112,11 @@ struct FloorPlanView: View {
                     }
                 },
                 onZoomOut: {
+                    if let cur = self.currentBuildingId {
+                        self.lastBuildingId = cur
+                    }
                     self.showFloorOverlay  = false
                     self.currentBuildingId = nil
-                    // No active building → no point burning battery on
-                    // a barometer subscription whose readings nothing
-                    // will consume.
                     barometer.stop()
                 }
             )
@@ -606,11 +608,13 @@ struct MapViewWithOverlay: UIViewRepresentable {
     let buildings: [BuildingLocator]
     let routeCoordinates: [CLLocationCoordinate2D]
     let actionProxy: MapActionProxy
+    let lastBuildingId: String?
     let onBuildingZoom: (String?) -> Void
     let onZoomOut: () -> Void
 
     private static let indoorZoomThreshold = 0.003
-    private static let buildingProximityMeters: CLLocationDistance = 200
+    private static let buildingProximityMeters: CLLocationDistance = 500
+    private static let buildingRestoreMeters:  CLLocationDistance = 800
 
     func makeUIView(context: Context) -> MKMapView {
         let mapView = MKMapView()
@@ -721,11 +725,25 @@ struct MapViewWithOverlay: UIViewRepresentable {
                distance < MapViewWithOverlay.buildingProximityMeters {
                 print("[PROX] zoom=\(zoomLevel) → \(building.name) at \(Int(distance))m, triggering overlay")
                 parent.onBuildingZoom(building.id)
-            } else {
-                let nearestName = nearest?.0.name ?? "none"
-                let nearestDist = nearest.map { Int($0.1) } ?? -1
-                print("[PROX] zoom=\(zoomLevel) zoomed-in but nearest building \(nearestName) is \(nearestDist)m away — keeping current overlay state (not auto-clearing)")
+                return
             }
+            
+            if let lastId = parent.lastBuildingId,
+               let restore = parent.buildings.first(where: { $0.id == lastId }) {
+                let d = center.distance(from: CLLocation(
+                    latitude: restore.coordinate.latitude,
+                    longitude: restore.coordinate.longitude
+                ))
+                if d < MapViewWithOverlay.buildingRestoreMeters {
+                    print("[PROX] zoom=\(zoomLevel) → restoring \(restore.name) at \(Int(d))m (last-shown)")
+                    parent.onBuildingZoom(restore.id)
+                    return
+                }
+            }
+
+            let nearestName = nearest?.0.name ?? "none"
+            let nearestDist = nearest.map { Int($0.1) } ?? -1
+            print("[PROX] zoom=\(zoomLevel) zoomed-in but nearest building \(nearestName) is \(nearestDist)m away — keeping current overlay state (not auto-clearing)")
         }
 
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
