@@ -728,7 +728,19 @@ struct MapViewWithOverlay: UIViewRepresentable {
             }
 
             if onScreen.isEmpty {
-                print("[PROX] zoom=\(zoomLevel) — no buildings in visible rect; keeping current overlay state")
+                print("[PROX] no buildings in padded rect — falling back to nearest")
+
+                let center = CLLocation(
+                    latitude: mapView.centerCoordinate.latitude,
+                    longitude: mapView.centerCoordinate.longitude
+                )
+
+                if let nearest = parent.buildings.min(by: {
+                    center.distance(from: CLLocation(latitude: $0.coordinate.latitude, longitude: $0.coordinate.longitude)) <
+                    center.distance(from: CLLocation(latitude: $1.coordinate.latitude, longitude: $1.coordinate.longitude))
+                }) {
+                    parent.onBuildingZoom(nearest.id)
+                }
                 return
             }
 
