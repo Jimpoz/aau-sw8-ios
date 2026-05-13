@@ -180,6 +180,7 @@ private struct BuildingsSection: View {
                             mapNav.pendingBuildingCoordinate = nil
                         }
                         mapNav.pendingBuildingId = building.id
+                        mapNav.pendingBuildingName = building.name
                         mapNav.selectedTab = .floorPlan
                     } label: {
                         BuildingRow(building: building)

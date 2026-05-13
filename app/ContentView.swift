@@ -13,13 +13,11 @@ enum AppTab: Hashable {
     case floorPlan, assistant, camera, explore, profile
 }
 
-/// Cross-tab signal: when ExploreView wants to hand off a building to the map,
-/// it stamps `pendingBuildingId` and switches `selectedTab` to `.floorPlan`.
-/// FloorPlanView consumes the id, flies the MKMapView there, and clears it.
 final class MapNavigationCoordinator: ObservableObject {
     @Published var selectedTab: AppTab = .floorPlan
     @Published var pendingBuildingId: String?
     @Published var pendingBuildingCoordinate: CLLocationCoordinate2D?
+    @Published var pendingBuildingName: String?
 }
 
 struct ContentView: View {

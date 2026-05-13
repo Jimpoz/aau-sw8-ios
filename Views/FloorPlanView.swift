@@ -83,6 +83,7 @@ struct FloorPlanView: View {
     @State private var currentBuildingCoordinate: CLLocationCoordinate2D?
     @State private var lastBuildingId: String?
     @State private var lastBuildingCoordinate: CLLocationCoordinate2D?
+    @State private var visitedBuildings: [BuildingLocator] = []
     @State private var routeDestination: RouteDestination?
     @State private var isAskingForDirections = false
     @State private var directionsPrompt = ""
@@ -97,7 +98,7 @@ struct FloorPlanView: View {
                 coordinate: userLocation ?? CLLocationCoordinate2D(latitude: 55.6761, longitude: 12.5683),
                 showFloorOverlay: $showFloorOverlay,
                 rooms: floorService.rooms,
-                buildings: floorService.buildings,
+                buildings: knownBuildings,
                 routeCoordinates: routeCoordinates,
                 actionProxy: mapProxy,
                 lastBuildingId: lastBuildingId,
@@ -172,6 +173,7 @@ struct FloorPlanView: View {
                                         mapNav.pendingBuildingCoordinate = coord
                                     }
                                     mapNav.pendingBuildingId = s.buildingId
+                                    mapNav.pendingBuildingName = s.name
                                     Task { await MainActor.run { floorService.suggestions = [] } }
                                 }) {
                                     HStack {
@@ -390,18 +392,35 @@ struct FloorPlanView: View {
         return best.map { ($0.0, $0.1) }
     }
 
+    private var knownBuildings: [BuildingLocator] {
+        var merged = floorService.buildings
+        let knownIds = Set(merged.map { $0.id })
+        for b in visitedBuildings where !knownIds.contains(b.id) {
+            merged.append(b)
+        }
+        return merged
+    }
+
+    private func rememberVisited(id: String, name: String?, coordinate: CLLocationCoordinate2D) {
+        if visitedBuildings.contains(where: { $0.id == id }) { return }
+        visitedBuildings.append(BuildingLocator(id: id, name: name ?? id, coordinate: coordinate))
+    }
+
     private func consumePendingBuildingTarget() {
         guard let pending = mapNav.pendingBuildingId else { return }
+        let pendingName = mapNav.pendingBuildingName
         if let building = floorService.buildings.first(where: { $0.id == pending }) {
             print("[NAV] flying to building \(building.name) at \(building.coordinate) and loading floors directly")
             mapProxy.flyTo(building.coordinate)
             currentBuildingId = pending
             currentBuildingCoordinate = building.coordinate
+            rememberVisited(id: pending, name: building.name, coordinate: building.coordinate)
             floorService.rooms = []
             showFloorOverlay = true
             loadFloorsAndOverlay(buildingId: pending)
             mapNav.pendingBuildingCoordinate = nil
             mapNav.pendingBuildingId = nil
+            mapNav.pendingBuildingName = nil
             return
         }
 
@@ -410,11 +429,13 @@ struct FloorPlanView: View {
             mapProxy.flyTo(coord)
             currentBuildingId = pending
             currentBuildingCoordinate = coord
+            rememberVisited(id: pending, name: pendingName, coordinate: coord)
             floorService.rooms = []
             showFloorOverlay = true
             loadFloorsAndOverlay(buildingId: pending)
             mapNav.pendingBuildingCoordinate = nil
             mapNav.pendingBuildingId = nil
+            mapNav.pendingBuildingName = nil
             return
         }
 
