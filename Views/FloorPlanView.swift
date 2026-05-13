@@ -612,9 +612,8 @@ struct MapViewWithOverlay: UIViewRepresentable {
     let onBuildingZoom: (String?) -> Void
     let onZoomOut: () -> Void
 
-    private static let indoorZoomThreshold = 0.003
-    private static let buildingProximityMeters: CLLocationDistance = 500
-    private static let buildingRestoreMeters:  CLLocationDistance = 800
+    private static let indoorZoomThreshold = 0.005
+    private static let visibilityPaddingMeters: CLLocationDistance = 150
 
     func makeUIView(context: Context) -> MKMapView {
         let mapView = MKMapView()
@@ -706,44 +705,44 @@ struct MapViewWithOverlay: UIViewRepresentable {
                 parent.onZoomOut()
                 return
             }
+
+            let visibleRect = mapView.visibleMapRect
+            let padPoints   = MKMapPointsPerMeterAtLatitude(mapView.centerCoordinate.latitude)
+                              * MapViewWithOverlay.visibilityPaddingMeters
+            let paddedRect  = visibleRect.insetBy(dx: -padPoints, dy: -padPoints)
+
             let center = CLLocation(
                 latitude: mapView.centerCoordinate.latitude,
                 longitude: mapView.centerCoordinate.longitude
             )
-            var nearest: (BuildingLocator, CLLocationDistance)? = nil
+
+            var onScreen: [(BuildingLocator, CLLocationDistance)] = []
             for building in parent.buildings {
-                let loc = CLLocation(
+                let point = MKMapPoint(building.coordinate)
+                guard paddedRect.contains(point) else { continue }
+                let d = center.distance(from: CLLocation(
                     latitude: building.coordinate.latitude,
                     longitude: building.coordinate.longitude
-                )
-                let distance = center.distance(from: loc)
-                if nearest == nil || distance < nearest!.1 {
-                    nearest = (building, distance)
-                }
-            }
-            if let (building, distance) = nearest,
-               distance < MapViewWithOverlay.buildingProximityMeters {
-                print("[PROX] zoom=\(zoomLevel) → \(building.name) at \(Int(distance))m, triggering overlay")
-                parent.onBuildingZoom(building.id)
-                return
-            }
-            
-            if let lastId = parent.lastBuildingId,
-               let restore = parent.buildings.first(where: { $0.id == lastId }) {
-                let d = center.distance(from: CLLocation(
-                    latitude: restore.coordinate.latitude,
-                    longitude: restore.coordinate.longitude
                 ))
-                if d < MapViewWithOverlay.buildingRestoreMeters {
-                    print("[PROX] zoom=\(zoomLevel) → restoring \(restore.name) at \(Int(d))m (last-shown)")
-                    parent.onBuildingZoom(restore.id)
-                    return
-                }
+                onScreen.append((building, d))
             }
 
-            let nearestName = nearest?.0.name ?? "none"
-            let nearestDist = nearest.map { Int($0.1) } ?? -1
-            print("[PROX] zoom=\(zoomLevel) zoomed-in but nearest building \(nearestName) is \(nearestDist)m away — keeping current overlay state (not auto-clearing)")
+            if onScreen.isEmpty {
+                print("[PROX] zoom=\(zoomLevel) — no buildings in visible rect; keeping current overlay state")
+                return
+            }
+
+            let pick: BuildingLocator
+            if let last = parent.lastBuildingId,
+               let restore = onScreen.first(where: { $0.0.id == last }) {
+                pick = restore.0
+                print("[PROX] zoom=\(zoomLevel) → restoring \(pick.name) (last-shown, in view)")
+            } else {
+                let nearest = onScreen.min(by: { $0.1 < $1.1 })!
+                pick = nearest.0
+                print("[PROX] zoom=\(zoomLevel) → \(pick.name) at \(Int(nearest.1))m centre, in view")
+            }
+            parent.onBuildingZoom(pick.id)
         }
 
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
