@@ -49,6 +49,14 @@ struct BuildingDetail {
     let organizationId: String?
 }
 
+struct FloorDetail {
+    let id: String
+    let originLat: Double
+    let originLng: Double
+    let originBearing: Double
+    let scaleFactor: Double
+}
+
 struct FloorSummary: Identifiable, Hashable {
     let id: String
     let floorIndex: Int
@@ -171,6 +179,65 @@ class FloorPlanService: ObservableObject {
     ) async throws {
         var request = URLRequest(url: baseURL.appendingPathComponent("buildings/\(buildingId)"))
         request.httpMethod = "PUT"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(AppSecrets.apiSecret, forHTTPHeaderField: "X-Api-Key")
+        request.attachBearer()
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "origin_lat": originLat,
+            "origin_lng": originLng,
+            "origin_bearing": originBearing,
+            "scale_factor": scaleFactor,
+        ])
+
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw NSError(domain: "FloorPlanService", code: -1)
+        }
+        if (200...299).contains(http.statusCode) { return }
+        let message = (try? JSONDecoder().decode([String: String].self, from: data))?["detail"]
+            ?? "HTTP \(http.statusCode)"
+        throw NSError(
+            domain: "FloorPlanService",
+            code: http.statusCode,
+            userInfo: [NSLocalizedDescriptionKey: message]
+        )
+    }
+
+    func fetchFloorDetail(floorId: String) async -> FloorDetail? {
+        var request = URLRequest(url: baseURL.appendingPathComponent("floors/\(floorId)"))
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(AppSecrets.apiSecret, forHTTPHeaderField: "X-Api-Key")
+        request.attachBearer()
+
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                return nil
+            }
+            let item = try JSONDecoder().decode(FloorDetailItem.self, from: data)
+            guard let lat = item.origin_lat, let lng = item.origin_lng else { return nil }
+            return FloorDetail(
+                id: item.id,
+                originLat: lat,
+                originLng: lng,
+                originBearing: item.origin_bearing ?? 0,
+                scaleFactor: item.scale_factor ?? 1
+            )
+        } catch {
+            return nil
+        }
+    }
+
+    func updateFloor(
+        floorId: String,
+        originLat: Double,
+        originLng: Double,
+        originBearing: Double,
+        scaleFactor: Double
+    ) async throws {
+        var request = URLRequest(url: baseURL.appendingPathComponent("floors/\(floorId)"))
+        request.httpMethod = "PATCH"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(AppSecrets.apiSecret, forHTTPHeaderField: "X-Api-Key")
@@ -374,7 +441,14 @@ private struct BuildingDetailItem: Decodable {
     let scale_factor: Double?
 }
 
-/// Matches the flat space object returned by GET /floors/{floor_id}/display
+private struct FloorDetailItem: Decodable {
+    let id: String
+    let origin_lat: Double?
+    let origin_lng: Double?
+    let origin_bearing: Double?
+    let scale_factor: Double?
+}
+
 private struct SpaceDisplayItem: Decodable {
     let id: String
     let display_name: String?
@@ -390,7 +464,6 @@ private struct SpaceDisplayItem: Decodable {
     let capacity: Int?
 
     func toRoom() -> Room? {
-        // Convert polygon_global [[lat,lng], ...] → [CLLocationCoordinate2D]
         var polygonGlobal: [CLLocationCoordinate2D]? = nil
         if let raw = polygon_global, raw.count >= 3 {
             let coords = raw.compactMap { pair -> CLLocationCoordinate2D? in

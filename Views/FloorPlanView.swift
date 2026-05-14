@@ -63,8 +63,15 @@ struct RouteDestination {
     let steps: [String]
 }
 
+enum BuildingEditScope {
+    case building   // moves the whole building (every floor) rigidly
+    case floor      // moves only the visible floor
+}
+
 struct BuildingEditState {
+    let scope: BuildingEditScope
     let buildingId: String
+    let floorId: String?            // set when scope == .floor
     let originLat: Double
     let originLng: Double
     let baseBearing: Double
@@ -115,6 +122,7 @@ struct FloorPlanView: View {
     @State private var isPreparingEdit = false
     @State private var isSavingEdit = false
     @State private var editError: String?
+    @State private var showEditScopeChoice = false
 
     var body: some View {
         ZStack {
@@ -292,7 +300,7 @@ struct FloorPlanView: View {
 
                         if showFloorOverlay && canEditBuildings {
                             Button {
-                                Task { await beginEdit() }
+                                showEditScopeChoice = true
                             } label: {
                                 HStack(spacing: 6) {
                                     if isPreparingEdit {
@@ -362,6 +370,13 @@ struct FloorPlanView: View {
             Button("Cancel", role: .cancel) { }
         } message: {
             Text("Type where you want to go. The assistant will produce step-by-step directions from your current location.")
+        }
+        .confirmationDialog("What do you want to edit?", isPresented: $showEditScopeChoice, titleVisibility: .visible) {
+            Button("Edit Building") { Task { await beginEdit(scope: .building) } }
+            Button("Edit This Floor") { Task { await beginEdit(scope: .floor) } }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Edit Building repositions every floor together. Edit This Floor moves only the floor you're viewing.")
         }
         .onAppear {
             setupFloorData()
@@ -523,12 +538,14 @@ struct FloorPlanView: View {
         return role == "editor" || role == "owner"
     }
 
-    private func beginEdit() async {
+    private func beginEdit(scope: BuildingEditScope) async {
         guard let buildingId = currentBuildingId else { return }
         editError = nil
         isPreparingEdit = true
         defer { isPreparingEdit = false }
 
+        // Org check is done off the building either way — the floor's owning
+        // org is the building's org.
         guard let detail = await floorService.fetchBuildingDetail(buildingId: buildingId) else {
             editError = "Couldn't load building details for editing."
             return
@@ -539,13 +556,37 @@ struct FloorPlanView: View {
             editError = "You can only edit buildings in your own organization."
             return
         }
-        editState = BuildingEditState(
-            buildingId: buildingId,
-            originLat: detail.originLat,
-            originLng: detail.originLng,
-            baseBearing: detail.originBearing,
-            baseScale: detail.scaleFactor
-        )
+
+        switch scope {
+        case .building:
+            editState = BuildingEditState(
+                scope: .building,
+                buildingId: buildingId,
+                floorId: nil,
+                originLat: detail.originLat,
+                originLng: detail.originLng,
+                baseBearing: detail.originBearing,
+                baseScale: detail.scaleFactor
+            )
+        case .floor:
+            guard let floorId = activeFloorId(in: floorService.floors) else {
+                editError = "No floor selected to edit."
+                return
+            }
+            guard let floor = await floorService.fetchFloorDetail(floorId: floorId) else {
+                editError = "Couldn't load floor details for editing."
+                return
+            }
+            editState = BuildingEditState(
+                scope: .floor,
+                buildingId: buildingId,
+                floorId: floorId,
+                originLat: floor.originLat,
+                originLng: floor.originLng,
+                baseBearing: floor.originBearing,
+                baseScale: floor.scaleFactor
+            )
+        }
     }
 
     private func saveEdit() async {
@@ -554,13 +595,25 @@ struct FloorPlanView: View {
         isSavingEdit = true
         defer { isSavingEdit = false }
         do {
-            try await floorService.updateBuilding(
-                buildingId: edit.buildingId,
-                originLat: edit.newOriginLat,
-                originLng: edit.newOriginLng,
-                originBearing: edit.newBearing,
-                scaleFactor: edit.newScale
-            )
+            switch edit.scope {
+            case .building:
+                try await floorService.updateBuilding(
+                    buildingId: edit.buildingId,
+                    originLat: edit.newOriginLat,
+                    originLng: edit.newOriginLng,
+                    originBearing: edit.newBearing,
+                    scaleFactor: edit.newScale
+                )
+            case .floor:
+                guard let floorId = edit.floorId else { return }
+                try await floorService.updateFloor(
+                    floorId: floorId,
+                    originLat: edit.newOriginLat,
+                    originLng: edit.newOriginLng,
+                    originBearing: edit.newBearing,
+                    scaleFactor: edit.newScale
+                )
+            }
             editState = nil
             if let floorId = activeFloorId(in: floorService.floors) {
                 await floorService.fetchFloorGeometry(floorId: floorId)
@@ -851,14 +904,23 @@ struct MapViewWithOverlay: UIViewRepresentable {
         uiView.isRotateEnabled = !editing
         uiView.isPitchEnabled = !editing
 
-        uiView.removeOverlays(uiView.overlays)
-        uiView.removeAnnotations(uiView.annotations.filter { !($0 is MKUserLocation) })
-        let polygons = buildOverlays(for: rooms)
-        let withGlobal = rooms.filter { ($0.polygonGlobal?.count ?? 0) >= 3 }.count
-        print("[OVERLAY] showFloorOverlay=\(showFloorOverlay) rooms=\(rooms.count) withPolygonGlobal=\(withGlobal) → addOverlays=\(polygons.count)")
-        if showFloorOverlay && !polygons.isEmpty {
-            uiView.addOverlays(polygons, level: .aboveLabels)
+        // Rooms: one persistent custom overlay, redrawn in place.
+        if context.coordinator.roomsOverlay == nil {
+            let ov = FloorRoomsOverlay()
+            context.coordinator.roomsOverlay = ov
+            uiView.addOverlay(ov, level: .aboveLabels)
         }
+        let visibleRooms = showFloorOverlay ? rooms : []
+        context.coordinator.roomsRenderer?.rooms = visibleRooms
+        context.coordinator.roomsRenderer?.editState = editState
+        context.coordinator.roomsRenderer?.setNeedsDisplay()
+        let withGlobal = visibleRooms.filter { ($0.polygonGlobal?.count ?? 0) >= 3 }.count
+        print("[OVERLAY] showFloorOverlay=\(showFloorOverlay) rooms=\(rooms.count) withPolygonGlobal=\(withGlobal) editing=\(editState != nil)")
+
+        // Route overlays + destination pin: few in number, rebuild only these.
+        let routeOverlays = uiView.overlays.filter { $0 is MKPolyline }
+        uiView.removeOverlays(routeOverlays)
+        uiView.removeAnnotations(uiView.annotations.filter { !($0 is MKUserLocation) })
 
         if routeCoordinates.count >= 2 {
             var coords = routeCoordinates
@@ -879,25 +941,12 @@ struct MapViewWithOverlay: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
-
-    private func buildOverlays(for rooms: [Room]) -> [MKOverlay] {
-        var overlays: [MKOverlay] = []
-        for room in rooms {
-            guard let raw = room.polygonGlobal, raw.count >= 3 else { continue }
-            var coords = editState.map { e in
-                raw.map { Self.applyEditTransform($0, e) }
-            } ?? raw
-            let polygon = MKPolygon(coordinates: &coords, count: coords.count)
-            polygon.title    = room.type.rawValue
-            polygon.subtitle = room.name
-            overlays.append(polygon)
-        }
-        return overlays
-    }
-
     class Coordinator: NSObject, MKMapViewDelegate, UIGestureRecognizerDelegate {
         var parent: MapViewWithOverlay
         var initialRegionSet = false
+
+        var roomsOverlay: FloorRoomsOverlay?
+        weak var roomsRenderer: FloorRoomsRenderer?
 
         weak var editPan: UIPanGestureRecognizer?
         weak var editPinch: UIPinchGestureRecognizer?
@@ -985,33 +1034,14 @@ struct MapViewWithOverlay: UIViewRepresentable {
                 r.lineCap = .round
                 return r
             }
-            if let polygon = overlay as? MKPolygon {
-                let r = MKPolygonRenderer(polygon: polygon)
-                let color = uiColorForRoomType(polygon.title ?? "")
-                r.fillColor   = color.withAlphaComponent(0.75)
-                r.strokeColor = color.withAlphaComponent(0.95)
-                r.lineWidth   = 1.5
+            if let roomsOverlay = overlay as? FloorRoomsOverlay {
+                let r = FloorRoomsRenderer(overlay: roomsOverlay)
+                r.rooms = parent.showFloorOverlay ? parent.rooms : []
+                r.editState = parent.editState
+                roomsRenderer = r
                 return r
             }
-            if let floorOverlay = overlay as? FloorPlanOverlay {
-                return FloorPlanOverlayRenderer(overlay: floorOverlay, rooms: parent.rooms)
-            }
             return MKOverlayRenderer(overlay: overlay)
-        }
-
-        private func uiColorForRoomType(_ type: String) -> UIColor {
-            switch type {
-            case "classroom":   return UIColor(red: 0.22, green: 0.72, blue: 0.42, alpha: 1)
-            case "office":      return UIColor(red: 0.35, green: 0.60, blue: 0.90, alpha: 1)
-            case "meetingRoom": return UIColor(red: 0.60, green: 0.40, blue: 0.90, alpha: 1)
-            case "restroom":    return UIColor(red: 0.20, green: 0.70, blue: 0.90, alpha: 1)
-            case "restaurant":  return UIColor(red: 1.00, green: 0.78, blue: 0.20, alpha: 1)
-            case "shop":        return UIColor(red: 1.00, green: 0.50, blue: 0.50, alpha: 1)
-            case "entrance":    return UIColor(red: 1.00, green: 0.62, blue: 0.22, alpha: 1)
-            case "exit":        return UIColor(red: 0.90, green: 0.28, blue: 0.28, alpha: 1)
-            case "hallway":     return UIColor(red: 0.88, green: 0.88, blue: 0.88, alpha: 1)
-            default:            return UIColor(red: 0.94, green: 0.94, blue: 0.96, alpha: 1)
-            }
         }
 
         func gestureRecognizer(
@@ -1033,8 +1063,10 @@ struct MapViewWithOverlay: UIViewRepresentable {
                     CGPoint(x: center.x + t.x, y: center.y + t.y),
                     toCoordinateFrom: mv
                 )
-                parent.editState?.deltaLat = panBaseDeltaLat + (c1.latitude - c0.latitude)
-                parent.editState?.deltaLng = panBaseDeltaLng + (c1.longitude - c0.longitude)
+                var e = parent.editState
+                e?.deltaLat = panBaseDeltaLat + (c1.latitude - c0.latitude)
+                e?.deltaLng = panBaseDeltaLng + (c1.longitude - c0.longitude)
+                parent.editState = e
             default:
                 break
             }
@@ -1071,22 +1103,54 @@ struct MapViewWithOverlay: UIViewRepresentable {
 }
 
 
-class FloorPlanOverlay: NSObject, MKOverlay {
-    let coordinate: CLLocationCoordinate2D
-    let boundingMapRect: MKMapRect
-    init(coordinate: CLLocationCoordinate2D, boundingMapRect: MKMapRect) {
-        self.coordinate      = coordinate
-        self.boundingMapRect = boundingMapRect
-    }
+final class FloorRoomsOverlay: NSObject, MKOverlay {
+    let coordinate = CLLocationCoordinate2D(latitude: 0, longitude: 0)
+    let boundingMapRect = MKMapRect.world
 }
 
-class FloorPlanOverlayRenderer: MKOverlayRenderer {
-    let rooms: [Room]
-    init(overlay: MKOverlay, rooms: [Room]) {
-        self.rooms = rooms
-        super.init(overlay: overlay)
+final class FloorRoomsRenderer: MKOverlayRenderer {
+    var rooms: [Room] = []
+    var editState: BuildingEditState?
+
+    override func draw(_ mapRect: MKMapRect, zoomScale: MKZoomScale, in ctx: CGContext) {
+        for room in rooms {
+            guard let raw = room.polygonGlobal, raw.count >= 3 else { continue }
+            let coords: [CLLocationCoordinate2D] = editState.map { e in
+                raw.map { MapViewWithOverlay.applyEditTransform($0, e) }
+            } ?? raw
+
+            let path = CGMutablePath()
+            for (i, c) in coords.enumerated() {
+                let p = point(for: MKMapPoint(c))
+                if i == 0 { path.move(to: p) } else { path.addLine(to: p) }
+            }
+            path.closeSubpath()
+
+            let color = Self.color(for: room.type.rawValue)
+            ctx.addPath(path)
+            ctx.setFillColor(color.withAlphaComponent(0.75).cgColor)
+            ctx.fillPath()
+            ctx.addPath(path)
+            ctx.setStrokeColor(color.withAlphaComponent(0.95).cgColor)
+            ctx.setLineWidth(1.5 / zoomScale)
+            ctx.strokePath()
+        }
     }
-    override func draw(_ mapRect: MKMapRect, zoomScale: MKZoomScale, in context: CGContext) {}
+
+    static func color(for type: String) -> UIColor {
+        switch type {
+        case "classroom":   return UIColor(red: 0.22, green: 0.72, blue: 0.42, alpha: 1)
+        case "office":      return UIColor(red: 0.35, green: 0.60, blue: 0.90, alpha: 1)
+        case "meetingRoom": return UIColor(red: 0.60, green: 0.40, blue: 0.90, alpha: 1)
+        case "restroom":    return UIColor(red: 0.20, green: 0.70, blue: 0.90, alpha: 1)
+        case "restaurant":  return UIColor(red: 1.00, green: 0.78, blue: 0.20, alpha: 1)
+        case "shop":        return UIColor(red: 1.00, green: 0.50, blue: 0.50, alpha: 1)
+        case "entrance":    return UIColor(red: 1.00, green: 0.62, blue: 0.22, alpha: 1)
+        case "exit":        return UIColor(red: 0.90, green: 0.28, blue: 0.28, alpha: 1)
+        case "hallway":     return UIColor(red: 0.88, green: 0.88, blue: 0.88, alpha: 1)
+        default:            return UIColor(red: 0.94, green: 0.94, blue: 0.96, alpha: 1)
+        }
+    }
 }
 
 
@@ -1284,7 +1348,7 @@ private struct BuildingEditPanel: View {
     var body: some View {
         VStack(spacing: 12) {
             HStack {
-                Text("Edit building")
+                Text(state.scope == .building ? "Edit building" : "Edit this floor")
                     .font(.system(size: 16, weight: .bold))
                     .foregroundColor(.black)
                 Spacer()
