@@ -63,8 +63,30 @@ struct RouteDestination {
     let steps: [String]
 }
 
+struct BuildingEditState {
+    let buildingId: String
+    let originLat: Double
+    let originLng: Double
+    let baseBearing: Double
+    let baseScale: Double
+
+    var deltaLat: Double = 0
+    var deltaLng: Double = 0
+    var deltaBearing: Double = 0      // degrees, additive
+    var scaleMultiplier: Double = 1   // multiplicative
+
+    var newOriginLat: Double { originLat + deltaLat }
+    var newOriginLng: Double { originLng + deltaLng }
+    var newBearing: Double { baseBearing + deltaBearing }
+    var newScale: Double { baseScale * scaleMultiplier }
+    var isDirty: Bool {
+        deltaLat != 0 || deltaLng != 0 || deltaBearing != 0 || scaleMultiplier != 1
+    }
+}
+
 struct FloorPlanView: View {
     @EnvironmentObject private var mapNav: MapNavigationCoordinator
+    @EnvironmentObject private var authService: AuthService
     @StateObject private var vm          = FloorPlanViewModel()
     @StateObject private var floorService = FloorPlanService()
     @StateObject private var mapProxy    = MapActionProxy()
@@ -89,6 +111,10 @@ struct FloorPlanView: View {
     @State private var directionsPrompt = ""
     @State private var isResolvingRoute = false
     @State private var isNavigating = false
+    @State private var editState: BuildingEditState?
+    @State private var isPreparingEdit = false
+    @State private var isSavingEdit = false
+    @State private var editError: String?
 
     var body: some View {
         ZStack {
@@ -103,6 +129,7 @@ struct FloorPlanView: View {
                 actionProxy: mapProxy,
                 lastBuildingId: lastBuildingId,
                 lastBuildingCoordinate: lastBuildingCoordinate,
+                editState: $editState,
                 onBuildingZoom: { buildingId, buildingCoord in
                     let changedBuilding = (buildingId != self.currentBuildingId)
                     self.currentBuildingId = buildingId
@@ -226,57 +253,106 @@ struct FloorPlanView: View {
         }
 
         .safeAreaInset(edge: .bottom) {
-            VStack(spacing: 8) {
-                HStack(spacing: 10) {
-                    Button {
-                        directionsPrompt = ""
-                        isAskingForDirections = true
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "signpost.right.fill")
-                                .font(.system(size: 14, weight: .bold))
-                            Text("Directions")
-                                .font(.system(size: 13, weight: .semibold))
-                        }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .foregroundStyle(.white)
-                        .background(Color.blue, in: Capsule())
-                        .shadow(color: Color.blue.opacity(0.35), radius: 10, x: 0, y: 6)
-                    }
-                    .padding(.leading, 16)
-
-                    Spacer()
-
-                    Button { mapProxy.centerOnUser() } label: {
-                        Image(systemName: "location.fill")
-                            .font(.system(size: 18, weight: .bold))
+            if let edit = editState {
+                BuildingEditPanel(
+                    state: edit,
+                    isSaving: isSavingEdit,
+                    errorText: editError,
+                    onReset: {
+                        editState?.deltaLat = 0
+                        editState?.deltaLng = 0
+                        editState?.deltaBearing = 0
+                        editState?.scaleMultiplier = 1
+                    },
+                    onCancel: { editState = nil; editError = nil },
+                    onSave: { Task { await saveEdit() } }
+                )
+                .padding(.horizontal, 16)
+                .padding(.top, 4)
+            } else {
+                VStack(spacing: 8) {
+                    HStack(spacing: 10) {
+                        Button {
+                            directionsPrompt = ""
+                            isAskingForDirections = true
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "signpost.right.fill")
+                                    .font(.system(size: 14, weight: .bold))
+                                Text("Directions")
+                                    .font(.system(size: 13, weight: .semibold))
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
                             .foregroundStyle(.white)
-                            .padding(14)
-                            .background(Color.blue, in: Circle())
+                            .background(Color.blue, in: Capsule())
                             .shadow(color: Color.blue.opacity(0.35), radius: 10, x: 0, y: 6)
-                    }
-                    .padding(.trailing, 16)
-                }
-                .padding(.bottom,8)
-
-                if let dest = routeDestination {
-                    BottomRouteCard(destination: dest, onDismiss: {
-                        routeDestination = nil
-                        searchText = ""
-                        if isNavigating {
-                            isNavigating = false
-                            mapProxy.stopFollowingUser()
                         }
-                    }, onStartNavigation: {
-                        isNavigating = true
-                        mapProxy.startFollowingUser()
-                    })
-                    .padding(.horizontal, 16)
+                        .padding(.leading, 16)
+
+                        if showFloorOverlay && canEditBuildings {
+                            Button {
+                                Task { await beginEdit() }
+                            } label: {
+                                HStack(spacing: 6) {
+                                    if isPreparingEdit {
+                                        ProgressView().tint(.white)
+                                    } else {
+                                        Image(systemName: "slider.horizontal.3")
+                                            .font(.system(size: 14, weight: .bold))
+                                    }
+                                    Text("Edit")
+                                        .font(.system(size: 13, weight: .semibold))
+                                }
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 10)
+                                .foregroundStyle(.white)
+                                .background(Color.orange, in: Capsule())
+                                .shadow(color: Color.orange.opacity(0.35), radius: 10, x: 0, y: 6)
+                            }
+                            .disabled(isPreparingEdit)
+                        }
+
+                        Spacer()
+
+                        Button { mapProxy.centerOnUser() } label: {
+                            Image(systemName: "location.fill")
+                                .font(.system(size: 18, weight: .bold))
+                                .foregroundStyle(.white)
+                                .padding(14)
+                                .background(Color.blue, in: Circle())
+                                .shadow(color: Color.blue.opacity(0.35), radius: 10, x: 0, y: 6)
+                        }
+                        .padding(.trailing, 16)
+                    }
+                    .padding(.bottom,8)
+
+                    if let editError {
+                        Text(editError)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 12).padding(.vertical, 8)
+                            .background(Color.red, in: Capsule())
+                    }
+
+                    if let dest = routeDestination {
+                        BottomRouteCard(destination: dest, onDismiss: {
+                            routeDestination = nil
+                            searchText = ""
+                            if isNavigating {
+                                isNavigating = false
+                                mapProxy.stopFollowingUser()
+                            }
+                        }, onStartNavigation: {
+                            isNavigating = true
+                            mapProxy.startFollowingUser()
+                        })
+                        .padding(.horizontal, 16)
+                    }
                 }
+                .frame(maxWidth: .infinity)
+                .padding(.top, 4)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.top, 4)
         }
 
         .navigationTitle("Floor Plan")
@@ -440,6 +516,58 @@ struct FloorPlanView: View {
         }
 
         print("[NAV] pending building \(pending) not yet in locators (count=\(floorService.buildings.count)), waiting…")
+    }
+
+    private var canEditBuildings: Bool {
+        guard let role = authService.principal?.role else { return false }
+        return role == "editor" || role == "owner"
+    }
+
+    private func beginEdit() async {
+        guard let buildingId = currentBuildingId else { return }
+        editError = nil
+        isPreparingEdit = true
+        defer { isPreparingEdit = false }
+
+        guard let detail = await floorService.fetchBuildingDetail(buildingId: buildingId) else {
+            editError = "Couldn't load building details for editing."
+            return
+        }
+        if let buildingOrg = detail.organizationId,
+           let myOrg = authService.principal?.organizationId,
+           buildingOrg != myOrg {
+            editError = "You can only edit buildings in your own organization."
+            return
+        }
+        editState = BuildingEditState(
+            buildingId: buildingId,
+            originLat: detail.originLat,
+            originLng: detail.originLng,
+            baseBearing: detail.originBearing,
+            baseScale: detail.scaleFactor
+        )
+    }
+
+    private func saveEdit() async {
+        guard let edit = editState else { return }
+        editError = nil
+        isSavingEdit = true
+        defer { isSavingEdit = false }
+        do {
+            try await floorService.updateBuilding(
+                buildingId: edit.buildingId,
+                originLat: edit.newOriginLat,
+                originLng: edit.newOriginLng,
+                originBearing: edit.newBearing,
+                scaleFactor: edit.newScale
+            )
+            editState = nil
+            if let floorId = activeFloorId(in: floorService.floors) {
+                await floorService.fetchFloorGeometry(floorId: floorId)
+            }
+        } catch {
+            editError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
     }
 
     private func askForDirections() {
@@ -637,11 +765,30 @@ struct MapViewWithOverlay: UIViewRepresentable {
     let actionProxy: MapActionProxy
     let lastBuildingId: String?
     let lastBuildingCoordinate: CLLocationCoordinate2D?
+    @Binding var editState: BuildingEditState?
     let onBuildingZoom: (String, CLLocationCoordinate2D) -> Void
     let onZoomOut: () -> Void
 
     private static let indoorZoomThreshold = 0.005
     private static let visibilityPaddingMeters: CLLocationDistance = 150
+
+    static func applyEditTransform(
+        _ coord: CLLocationCoordinate2D,
+        _ e: BuildingEditState
+    ) -> CLLocationCoordinate2D {
+        let mPerDegLat = 111_000.0
+        let mPerDegLng = 111_000.0 * cos(e.originLat * .pi / 180)
+        let dxM = (coord.longitude - e.originLng) * mPerDegLng
+        let dyM = (coord.latitude - e.originLat) * mPerDegLat
+        let b = e.deltaBearing * .pi / 180
+        let rx = dxM * cos(b) - dyM * sin(b)
+        let ry = dxM * sin(b) + dyM * cos(b)
+        let sx = rx * e.scaleMultiplier
+        let sy = ry * e.scaleMultiplier
+        let newLng = e.originLng + e.deltaLng + sx / mPerDegLng
+        let newLat = e.originLat + e.deltaLat + sy / mPerDegLat
+        return CLLocationCoordinate2D(latitude: newLat, longitude: newLng)
+    }
 
     func makeUIView(context: Context) -> MKMapView {
         let mapView = MKMapView()
@@ -658,6 +805,28 @@ struct MapViewWithOverlay: UIViewRepresentable {
             span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
         )
         mapView.setRegion(region, animated: false)
+
+        let pan = UIPanGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleEditPan(_:))
+        )
+        let pinch = UIPinchGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleEditPinch(_:))
+        )
+        let rotation = UIRotationGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleEditRotation(_:))
+        )
+        for gr in [pan, pinch, rotation] as [UIGestureRecognizer] {
+            gr.delegate = context.coordinator
+            gr.isEnabled = false
+            mapView.addGestureRecognizer(gr)
+        }
+        context.coordinator.editPan = pan
+        context.coordinator.editPinch = pinch
+        context.coordinator.editRotation = rotation
+
         return mapView
     }
 
@@ -672,6 +841,16 @@ struct MapViewWithOverlay: UIViewRepresentable {
             uiView.setRegion(region, animated: false)
             context.coordinator.initialRegionSet = true
         }
+
+        let editing = editState != nil
+        context.coordinator.editPan?.isEnabled = editing
+        context.coordinator.editPinch?.isEnabled = editing
+        context.coordinator.editRotation?.isEnabled = editing
+        uiView.isScrollEnabled = !editing
+        uiView.isZoomEnabled = !editing
+        uiView.isRotateEnabled = !editing
+        uiView.isPitchEnabled = !editing
+
         uiView.removeOverlays(uiView.overlays)
         uiView.removeAnnotations(uiView.annotations.filter { !($0 is MKUserLocation) })
         let polygons = buildOverlays(for: rooms)
@@ -704,7 +883,10 @@ struct MapViewWithOverlay: UIViewRepresentable {
     private func buildOverlays(for rooms: [Room]) -> [MKOverlay] {
         var overlays: [MKOverlay] = []
         for room in rooms {
-            guard var coords = room.polygonGlobal, coords.count >= 3 else { continue }
+            guard let raw = room.polygonGlobal, raw.count >= 3 else { continue }
+            var coords = editState.map { e in
+                raw.map { Self.applyEditTransform($0, e) }
+            } ?? raw
             let polygon = MKPolygon(coordinates: &coords, count: coords.count)
             polygon.title    = room.type.rawValue
             polygon.subtitle = room.name
@@ -713,13 +895,22 @@ struct MapViewWithOverlay: UIViewRepresentable {
         return overlays
     }
 
-    class Coordinator: NSObject, MKMapViewDelegate {
+    class Coordinator: NSObject, MKMapViewDelegate, UIGestureRecognizerDelegate {
         var parent: MapViewWithOverlay
         var initialRegionSet = false
+
+        weak var editPan: UIPanGestureRecognizer?
+        weak var editPinch: UIPinchGestureRecognizer?
+        weak var editRotation: UIRotationGestureRecognizer?
+        private var panBaseDeltaLat = 0.0
+        private var panBaseDeltaLng = 0.0
+        private var pinchBaseScale = 1.0
+        private var rotationBaseBearing = 0.0
 
         init(_ parent: MapViewWithOverlay) { self.parent = parent }
 
         func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {
+            if parent.editState != nil { return }
             let zoomLevel = mapView.region.span.latitudeDelta
             if let last = parent.actionProxy.lastProgrammaticFly {
                 let elapsed = Date().timeIntervalSince(last)
@@ -820,6 +1011,60 @@ struct MapViewWithOverlay: UIViewRepresentable {
             case "exit":        return UIColor(red: 0.90, green: 0.28, blue: 0.28, alpha: 1)
             case "hallway":     return UIColor(red: 0.88, green: 0.88, blue: 0.88, alpha: 1)
             default:            return UIColor(red: 0.94, green: 0.94, blue: 0.96, alpha: 1)
+            }
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
+        ) -> Bool {true}
+
+        @objc func handleEditPan(_ g: UIPanGestureRecognizer) {
+            guard parent.editState != nil, let mv = g.view as? MKMapView else { return }
+            switch g.state {
+            case .began:
+                panBaseDeltaLat = parent.editState?.deltaLat ?? 0
+                panBaseDeltaLng = parent.editState?.deltaLng ?? 0
+            case .changed:
+                let t = g.translation(in: mv)
+                let center = CGPoint(x: mv.bounds.midX, y: mv.bounds.midY)
+                let c0 = mv.convert(center, toCoordinateFrom: mv)
+                let c1 = mv.convert(
+                    CGPoint(x: center.x + t.x, y: center.y + t.y),
+                    toCoordinateFrom: mv
+                )
+                parent.editState?.deltaLat = panBaseDeltaLat + (c1.latitude - c0.latitude)
+                parent.editState?.deltaLng = panBaseDeltaLng + (c1.longitude - c0.longitude)
+            default:
+                break
+            }
+        }
+
+        @objc func handleEditPinch(_ g: UIPinchGestureRecognizer) {
+            guard parent.editState != nil else { return }
+            switch g.state {
+            case .began:
+                pinchBaseScale = parent.editState?.scaleMultiplier ?? 1
+            case .changed:
+                let next = pinchBaseScale * Double(g.scale)
+                parent.editState?.scaleMultiplier = min(max(next, 0.2), 5.0)
+            default:
+                break
+            }
+        }
+
+        @objc func handleEditRotation(_ g: UIRotationGestureRecognizer) {
+            guard parent.editState != nil else { return }
+            switch g.state {
+            case .began:
+                rotationBaseBearing = parent.editState?.deltaBearing ?? 0
+            case .changed:
+                // UIRotationGestureRecognizer.rotation is clockwise-positive in
+                // screen space; map bearing increases counter-clockwise, so negate.
+                let deg = Double(g.rotation) * 180 / .pi
+                parent.editState?.deltaBearing = rotationBaseBearing - deg
+            default:
+                break
             }
         }
     }
@@ -1022,6 +1267,102 @@ private struct ZoomControls: View {
     }
 }
 
+private struct BuildingEditPanel: View {
+    let state: BuildingEditState
+    let isSaving: Bool
+    let errorText: String?
+    let onReset: () -> Void
+    let onCancel: () -> Void
+    let onSave: () -> Void
+
+    private var offsetMeters: Int {
+        let dyM = state.deltaLat * 111_000
+        let dxM = state.deltaLng * 111_000 * cos(state.originLat * .pi / 180)
+        return Int((dxM * dxM + dyM * dyM).squareRoot().rounded())
+    }
+
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack {
+                Text("Edit building")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundColor(.black)
+                Spacer()
+                Text("Drag · pinch · twist")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.gray)
+            }
+
+            HStack(spacing: 10) {
+                editStat(label: "Moved", value: "\(offsetMeters) m")
+                editStat(label: "Rotated", value: String(format: "%.1f°", state.deltaBearing))
+                editStat(label: "Scale", value: String(format: "%.2f×", state.scaleMultiplier))
+            }
+
+            if let errorText {
+                Text(errorText)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            HStack(spacing: 10) {
+                Button(action: onCancel) {
+                    Text("Cancel")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.gray)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Color.gray.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+                }
+                .disabled(isSaving)
+
+                Button(action: onReset) {
+                    Text("Reset")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.orange)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+                }
+                .disabled(isSaving || !state.isDirty)
+
+                Button(action: onSave) {
+                    HStack(spacing: 6) {
+                        if isSaving { ProgressView().tint(.white) }
+                        Text(isSaving ? "Saving…" : "Save")
+                            .font(.system(size: 14, weight: .semibold))
+                    }
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Color.blue, in: RoundedRectangle(cornerRadius: 12))
+                }
+                .disabled(isSaving || !state.isDirty)
+                .opacity((isSaving || !state.isDirty) ? 0.6 : 1.0)
+            }
+        }
+        .padding(14)
+        .background(Color.white, in: RoundedRectangle(cornerRadius: 20))
+        .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.gray.opacity(0.2)))
+        .shadow(color: Color.black.opacity(0.12), radius: 16, x: 0, y: 8)
+    }
+
+    private func editStat(label: String, value: String) -> some View {
+        VStack(spacing: 3) {
+            Text(label.uppercased())
+                .font(.system(size: 10, weight: .black))
+                .foregroundColor(.gray)
+            Text(value)
+                .font(.system(size: 15, weight: .bold))
+                .foregroundColor(.black)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
+        .background(Color.gray.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+    }
+}
+
 private struct BottomRouteCard: View {
     let destination: RouteDestination
     var onDismiss: () -> Void
@@ -1101,4 +1442,8 @@ private struct BottomRouteCard: View {
     }
 }
 
-#Preview("Floor Plan") { FloorPlanView() }
+#Preview("Floor Plan") {
+    FloorPlanView()
+        .environmentObject(MapNavigationCoordinator())
+        .environmentObject(AuthService())
+}

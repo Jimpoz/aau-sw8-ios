@@ -14,6 +14,7 @@ struct BuildingLocator: Identifiable, Hashable {
     let name: String
     let coordinate: CLLocationCoordinate2D
     let address: String?
+    let organizationId: String?
     let organizationName: String?
     let isPublic: Bool
 
@@ -22,6 +23,7 @@ struct BuildingLocator: Identifiable, Hashable {
         name: String,
         coordinate: CLLocationCoordinate2D,
         address: String? = nil,
+        organizationId: String? = nil,
         organizationName: String? = nil,
         isPublic: Bool = false
     ) {
@@ -29,12 +31,22 @@ struct BuildingLocator: Identifiable, Hashable {
         self.name = name
         self.coordinate = coordinate
         self.address = address
+        self.organizationId = organizationId
         self.organizationName = organizationName
         self.isPublic = isPublic
     }
 
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
     static func == (a: BuildingLocator, b: BuildingLocator) -> Bool { a.id == b.id }
+}
+
+struct BuildingDetail {
+    let id: String
+    let originLat: Double
+    let originLng: Double
+    let originBearing: Double
+    let scaleFactor: Double
+    let organizationId: String?
 }
 
 struct FloorSummary: Identifiable, Hashable {
@@ -111,6 +123,7 @@ class FloorPlanService: ObservableObject {
                         longitude: item.origin_lng
                     ),
                     address: item.address,
+                    organizationId: item.organization_id,
                     organizationName: item.organization_name,
                     isPublic: item.is_public
                 )
@@ -121,6 +134,66 @@ class FloorPlanService: ObservableObject {
                 self.error = "Failed to load buildings: \(error.localizedDescription)"
             }
         }
+    }
+
+    func fetchBuildingDetail(buildingId: String) async -> BuildingDetail? {
+        var request = URLRequest(url: baseURL.appendingPathComponent("buildings/\(buildingId)"))
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(AppSecrets.apiSecret, forHTTPHeaderField: "X-Api-Key")
+        request.attachBearer()
+
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                return nil
+            }
+            let item = try JSONDecoder().decode(BuildingDetailItem.self, from: data)
+            guard let lat = item.origin_lat, let lng = item.origin_lng else { return nil }
+            return BuildingDetail(
+                id: item.id,
+                originLat: lat,
+                originLng: lng,
+                originBearing: item.origin_bearing ?? 0,
+                scaleFactor: item.scale_factor ?? 1,
+                organizationId: item.organization_id
+            )
+        } catch {
+            return nil
+        }
+    }
+
+    func updateBuilding(
+        buildingId: String,
+        originLat: Double,
+        originLng: Double,
+        originBearing: Double,
+        scaleFactor: Double
+    ) async throws {
+        var request = URLRequest(url: baseURL.appendingPathComponent("buildings/\(buildingId)"))
+        request.httpMethod = "PUT"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(AppSecrets.apiSecret, forHTTPHeaderField: "X-Api-Key")
+        request.attachBearer()
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "origin_lat": originLat,
+            "origin_lng": originLng,
+            "origin_bearing": originBearing,
+            "scale_factor": scaleFactor,
+        ])
+
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw NSError(domain: "FloorPlanService", code: -1)
+        }
+        if (200...299).contains(http.statusCode) { return }
+        let message = (try? JSONDecoder().decode([String: String].self, from: data))?["detail"]
+            ?? "HTTP \(http.statusCode)"
+        throw NSError(
+            domain: "FloorPlanService",
+            code: http.statusCode,
+            userInfo: [NSLocalizedDescriptionKey: message]
+        )
     }
 
     @discardableResult
@@ -290,6 +363,15 @@ private struct VisibleBuildingItem: Decodable {
     let is_public: Bool
     let origin_lat: Double
     let origin_lng: Double
+}
+
+private struct BuildingDetailItem: Decodable {
+    let id: String
+    let organization_id: String?
+    let origin_lat: Double?
+    let origin_lng: Double?
+    let origin_bearing: Double?
+    let scale_factor: Double?
 }
 
 /// Matches the flat space object returned by GET /floors/{floor_id}/display
