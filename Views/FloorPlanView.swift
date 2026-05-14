@@ -351,9 +351,6 @@ struct FloorPlanView: View {
                                 isNavigating = false
                                 mapProxy.stopFollowingUser()
                             }
-                        }, onStartNavigation: {
-                            isNavigating = true
-                            mapProxy.startFollowingUser()
                         })
                         .padding(.horizontal, 16)
                     }
@@ -468,19 +465,6 @@ struct FloorPlanView: View {
         } else {
             routeCoordinates = stepCoords
         }
-    }
-
-    private func nearestVisibleBuilding() -> (building: BuildingLocator, distance: CLLocationDistance)? {
-        guard let user = userLocation, !floorService.buildings.isEmpty else { return nil }
-        let userLoc = CLLocation(latitude: user.latitude, longitude: user.longitude)
-        var best: (BuildingLocator, CLLocationDistance)?
-        for b in floorService.buildings {
-            let d = userLoc.distance(from: CLLocation(
-                latitude: b.coordinate.latitude, longitude: b.coordinate.longitude
-            ))
-            if best == nil || d < best!.1 { best = (b, d) }
-        }
-        return best.map { ($0.0, $0.1) }
     }
 
     private var knownBuildings: [BuildingLocator] {
@@ -631,19 +615,6 @@ struct FloorPlanView: View {
     }
 
     private func resolveRoute(to destination: String) {
-        if let nearest = nearestVisibleBuilding(), nearest.distance > 80 {
-            routeDestination = RouteDestination(
-                title: destination,
-                subtitle: "You're outside any indoor space",
-                steps: [
-                    "Indoor directions are only available once you're at or inside a building.",
-                    "The closest mapped building is \(nearest.building.name), about \(Int(nearest.distance))m away.",
-                    "Use the world map to walk there first, then ask again."
-                ]
-            )
-            return
-        }
-
         routeDestination = RouteDestination(title: destination, subtitle: "Calculating route…", steps: [])
         isResolvingRoute = true
 
@@ -656,24 +627,54 @@ struct FloorPlanView: View {
             context["building_id"] = bid
         }
 
+        let knownNow = knownBuildings
+        let userLoc0 = userLocation
+
         Task {
-            do {
-                await floorService.searchGlobal(destination)
-                if let top = floorService.suggestions.first, let destSpaceId = Optional(top.id) {
-                    if let loc = userLocation {
-                        await navigationService.computeRoute(fromLatitude: loc.latitude, longitude: loc.longitude, to: destSpaceId)
-                        if let route = navigationService.currentRoute {
-                            let steps = route.steps.map { $0.instruction }
-                            await MainActor.run {
-                                routeDestination = RouteDestination(title: destination, subtitle: "Route ready", steps: steps)
-                                isResolvingRoute = false
-                            }
-                            return
+            await floorService.searchGlobal(destination)
+            let top = floorService.suggestions.first
+
+            // If we resolved the destination and know where the user is, gate
+            // on distance to the *destination's* building — not just whatever
+            // building happens to be nearest.
+            if let top, let loc = userLoc0 {
+                let building = top.buildingId.flatMap { id in
+                    knownNow.first(where: { $0.id == id })
+                }
+                let target = building?.coordinate ?? top.coordinate
+                if let target {
+                    let dist = CLLocation(latitude: loc.latitude, longitude: loc.longitude)
+                        .distance(from: CLLocation(latitude: target.latitude, longitude: target.longitude))
+                    if dist > 80 {
+                        let buildingName = building?.name ?? "the building it's in"
+                        await MainActor.run {
+                            routeDestination = RouteDestination(
+                                title: destination,
+                                subtitle: "You're too far for indoor directions",
+                                steps: [
+                                    "\(top.name) is in \(buildingName), about \(Int(dist)) m away.",
+                                    "Indoor directions are only available once you're at or inside the building.",
+                                    "Use the world map to walk there first, then ask again."
+                                ]
+                            )
+                            isResolvingRoute = false
                         }
+                        return
                     }
                 }
-            } catch {
-                print("[ROUTE] indoor route lookup failed: \(error.localizedDescription); falling back to assistant")
+            }
+
+            // Close enough (or location unknown) — try the indoor route.
+            if let top, let loc = userLoc0 {
+                await navigationService.computeRoute(fromLatitude: loc.latitude, longitude: loc.longitude, to: top.id)
+                if let route = navigationService.currentRoute {
+                    let steps = route.steps.map { $0.instruction }
+                    await MainActor.run {
+                        routeDestination = RouteDestination(title: destination, subtitle: "Route ready", steps: steps)
+                        isResolvingRoute = false
+                    }
+                    return
+                }
             }
 
             do {
@@ -1430,26 +1431,12 @@ private struct BuildingEditPanel: View {
 private struct BottomRouteCard: View {
     let destination: RouteDestination
     var onDismiss: () -> Void
-    var onStartNavigation: (() -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 12) {
             ZStack {
                 Capsule().fill(Color.gray.opacity(0.3)).frame(width: 44, height: 5)
                 HStack {
-                    if let start = onStartNavigation {
-                        Button(action: start) {
-                            HStack(spacing: 6) {
-                                Image(systemName: "car.fill")
-                                    .font(.system(size: 13, weight: .bold))
-                                Text("Start")
-                                    .font(.system(size: 13, weight: .semibold))
-                            }
-                            .padding(8)
-                            .foregroundColor(.white)
-                            .background(Color.green, in: Capsule())
-                        }
-                    }
                     Spacer()
                     Button(action: onDismiss) {
                         Image(systemName: "xmark")
