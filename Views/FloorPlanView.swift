@@ -114,6 +114,7 @@ struct FloorPlanView: View {
     @State private var lastBuildingCoordinate: CLLocationCoordinate2D?
     @State private var visitedBuildings: [BuildingLocator] = []
     @State private var routeDestination: RouteDestination?
+    @State private var pendingRouteSuggestion: SpaceSuggestion?
     @State private var isAskingForDirections = false
     @State private var directionsPrompt = ""
     @State private var isResolvingRoute = false
@@ -209,11 +210,12 @@ struct FloorPlanView: View {
                                         #selector(UIResponder.resignFirstResponder),
                                         to: nil, from: nil, for: nil
                                     )
-                                    if let coord = s.coordinate {
-                                        mapNav.pendingBuildingCoordinate = coord
-                                    }
-                                    mapNav.pendingBuildingId = s.buildingId
-                                    mapNav.pendingBuildingName = s.name
+                                    pendingRouteSuggestion = s
+                                    routeDestination = RouteDestination(
+                                        title: s.name,
+                                        subtitle: "Tap the arrow to get directions",
+                                        steps: []
+                                    )
                                 }) {
                                     HStack {
                                         VStack(alignment: .leading) {
@@ -350,11 +352,14 @@ struct FloorPlanView: View {
                     if let dest = routeDestination {
                         BottomRouteCard(destination: dest, onDismiss: {
                             routeDestination = nil
+                            pendingRouteSuggestion = nil
                             searchText = ""
                             if isNavigating {
                                 isNavigating = false
                                 mapProxy.stopFollowingUser()
                             }
+                        }, onNavigate: {
+                            resolveRoute(to: dest.title, suggestion: pendingRouteSuggestion)
                         })
                         .padding(.horizontal, 16)
                     }
@@ -394,7 +399,7 @@ struct FloorPlanView: View {
         .onChange(of: searchText) { newValue in
             searchTask?.cancel()
             let q = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard q.count >= 2 else {
+            guard q.count >= 1 else {
                 floorService.suggestions = []
                 return
             }
@@ -618,7 +623,7 @@ struct FloorPlanView: View {
         resolveRoute(to: dest)
     }
 
-    private func resolveRoute(to destination: String) {
+    private func resolveRoute(to destination: String, suggestion: SpaceSuggestion? = nil) {
         routeDestination = RouteDestination(title: destination, subtitle: "Calculating route…", steps: [])
         isResolvingRoute = true
 
@@ -635,8 +640,15 @@ struct FloorPlanView: View {
         let userLoc0 = userLocation
 
         Task {
-            await floorService.searchGlobal(destination)
-            let top = floorService.suggestions.first
+            // Use the suggestion the user already picked; only re-search when
+            // routing from free-text (the "Get directions" prompt).
+            let top: SpaceSuggestion?
+            if let suggestion {
+                top = suggestion
+            } else {
+                await floorService.searchGlobal(destination)
+                top = floorService.suggestions.first
+            }
 
             // If we resolved the destination and know where the user is, gate
             // on distance to the *destination's* building — not just whatever
@@ -1435,6 +1447,7 @@ private struct BuildingEditPanel: View {
 private struct BottomRouteCard: View {
     let destination: RouteDestination
     var onDismiss: () -> Void
+    var onNavigate: () -> Void
 
     var body: some View {
         VStack(spacing: 12) {
@@ -1465,7 +1478,7 @@ private struct BottomRouteCard: View {
                     }
                 }
                 Spacer()
-                Button {} label: {
+                Button(action: onNavigate) {
                     Image(systemName: "location.north.fill")
                         .font(.system(size: 18, weight: .bold))
                         .foregroundColor(.white)
