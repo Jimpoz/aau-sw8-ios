@@ -203,13 +203,17 @@ struct FloorPlanView: View {
                         VStack(spacing: 0) {
                             ForEach(floorService.suggestions, id: \.id) { s in
                                 Button(action: {
-                                    searchText = s.name
+                                    searchText = ""
+                                    floorService.suggestions = []
+                                    UIApplication.shared.sendAction(
+                                        #selector(UIResponder.resignFirstResponder),
+                                        to: nil, from: nil, for: nil
+                                    )
                                     if let coord = s.coordinate {
                                         mapNav.pendingBuildingCoordinate = coord
                                     }
                                     mapNav.pendingBuildingId = s.buildingId
                                     mapNav.pendingBuildingName = s.name
-                                    Task { await MainActor.run { floorService.suggestions = [] } }
                                 }) {
                                     HStack {
                                         VStack(alignment: .leading) {
