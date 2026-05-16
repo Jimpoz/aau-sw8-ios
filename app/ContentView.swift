@@ -18,6 +18,10 @@ final class MapNavigationCoordinator: ObservableObject {
     @Published var pendingBuildingId: String?
     @Published var pendingBuildingCoordinate: CLLocationCoordinate2D?
     @Published var pendingBuildingName: String?
+    @Published var pendingFloorIndex: Int?
+    @Published var pendingDestinationSpaceId: String?
+    @Published var pendingDestinationSpaceName: String?
+    @Published var pendingDestinationSpaceCoordinate: CLLocationCoordinate2D?
 }
 
 struct ContentView: View {

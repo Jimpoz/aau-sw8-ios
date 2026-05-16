@@ -759,20 +759,60 @@ struct FloorPlanView: View {
                 vm.availableFloors = summaries.map { $0.floorIndex }
                 vm.availableFloorLabels = summaries.map { floorLabel(for: $0) }
                 if !summaries.isEmpty {
-                    let groundIndex = summaries.firstIndex { $0.floorIndex == 0 } ?? 0
-                    vm.selectedFloor = groundIndex
+                    if let target = mapNav.pendingFloorIndex,
+                       let i = summaries.firstIndex(where: { $0.floorIndex == target }) {
+                        vm.selectedFloor = i
+                        mapNav.pendingFloorIndex = nil
+                    } else {
+                        vm.selectedFloor = summaries.firstIndex { $0.floorIndex == 0 } ?? 0
+                    }
                 }
                 barometer.start(floors: summaries, baselineFloorIndex: 0)
             }
             if let active = activeFloorId(in: summaries) {
                 await floorService.fetchFloorGeometry(floorId: active)
+                await MainActor.run { consumePendingDestination() }
             }
         }
     }
 
     private func loadBuildingFloorData(buildingId: String) {
         guard let floorId = activeFloorId(in: floorService.floors) else { return }
-        Task { await floorService.fetchFloorGeometry(floorId: floorId) }
+        Task {
+            await floorService.fetchFloorGeometry(floorId: floorId)
+            await MainActor.run { consumePendingDestination() }
+        }
+    }
+
+    private func consumePendingDestination() {
+        guard let spaceId = mapNav.pendingDestinationSpaceId else { return }
+        let room = floorService.rooms.first(where: { $0.id == spaceId })
+        let name = mapNav.pendingDestinationSpaceName ?? room?.name ?? spaceId
+        let coord: CLLocationCoordinate2D? = mapNav.pendingDestinationSpaceCoordinate
+            ?? room?.centroidGlobal
+            ?? {
+                guard let p = room?.polygonGlobal, !p.isEmpty else { return nil }
+                let lat = p.reduce(0.0) { $0 + $1.latitude } / Double(p.count)
+                let lng = p.reduce(0.0) { $0 + $1.longitude } / Double(p.count)
+                return CLLocationCoordinate2D(latitude: lat, longitude: lng)
+            }()
+        pendingRouteSuggestion = SpaceSuggestion(
+            id: spaceId,
+            name: name,
+            buildingId: currentBuildingId,
+            floorId: activeFloorId(in: floorService.floors),
+            campusId: nil,
+            lat: coord?.latitude,
+            lon: coord?.longitude
+        )
+        routeDestination = RouteDestination(
+            title: name,
+            subtitle: "Tap the arrow to get directions",
+            steps: []
+        )
+        mapNav.pendingDestinationSpaceId = nil
+        mapNav.pendingDestinationSpaceName = nil
+        mapNav.pendingDestinationSpaceCoordinate = nil
     }
 
     private func activeFloorId(in summaries: [FloorSummary]) -> String? {
