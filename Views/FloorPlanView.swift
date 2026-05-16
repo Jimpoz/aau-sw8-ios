@@ -159,6 +159,28 @@ struct FloorPlanView: View {
                     self.currentBuildingId = nil
                     self.currentBuildingCoordinate = nil
                     barometer.stop()
+                },
+                onRoomTap: { room in
+                    let center: CLLocationCoordinate2D? = room.centroidGlobal ?? {
+                        guard let p = room.polygonGlobal, !p.isEmpty else { return nil }
+                        let lat = p.reduce(0.0) { $0 + $1.latitude } / Double(p.count)
+                        let lng = p.reduce(0.0) { $0 + $1.longitude } / Double(p.count)
+                        return CLLocationCoordinate2D(latitude: lat, longitude: lng)
+                    }()
+                    pendingRouteSuggestion = SpaceSuggestion(
+                        id: room.id,
+                        name: room.name,
+                        buildingId: currentBuildingId,
+                        floorId: activeFloorId(in: floorService.floors),
+                        campusId: nil,
+                        lat: center?.latitude,
+                        lon: center?.longitude
+                    )
+                    routeDestination = RouteDestination(
+                        title: room.name,
+                        subtitle: "Tap the arrow to get directions",
+                        steps: []
+                    )
                 }
             )
             .ignoresSafeArea()
@@ -838,6 +860,7 @@ struct MapViewWithOverlay: UIViewRepresentable {
     @Binding var editState: BuildingEditState?
     let onBuildingZoom: (String, CLLocationCoordinate2D) -> Void
     let onZoomOut: () -> Void
+    let onRoomTap: (Room) -> Void
 
     private static let indoorZoomThreshold = 0.005
     private static let visibilityPaddingMeters: CLLocationDistance = 150
@@ -896,6 +919,16 @@ struct MapViewWithOverlay: UIViewRepresentable {
         context.coordinator.editPan = pan
         context.coordinator.editPinch = pinch
         context.coordinator.editRotation = rotation
+
+        // Tap-to-select-room. cancelsTouchesInView=false so MapKit's own
+        // gestures (annotation selection, scroll) keep working.
+        let tap = UITapGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleRoomTap(_:))
+        )
+        tap.cancelsTouchesInView = false
+        tap.delegate = context.coordinator
+        mapView.addGestureRecognizer(tap)
 
         return mapView
     }
@@ -1066,6 +1099,30 @@ struct MapViewWithOverlay: UIViewRepresentable {
             shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
         ) -> Bool {true}
 
+        @objc func handleRoomTap(_ g: UITapGestureRecognizer) {
+            guard parent.editState == nil,
+                  parent.showFloorOverlay,
+                  let mv = g.view as? MKMapView
+            else { return }
+            let tapCoord = mv.convert(g.location(in: mv), toCoordinateFrom: mv)
+            let tapPoint = MKMapPoint(tapCoord)
+            let tapCG = CGPoint(x: tapPoint.x, y: tapPoint.y)
+            for room in parent.rooms {
+                guard let poly = room.polygonGlobal, poly.count >= 3 else { continue }
+                let path = CGMutablePath()
+                for (i, c) in poly.enumerated() {
+                    let p = MKMapPoint(c)
+                    let cg = CGPoint(x: p.x, y: p.y)
+                    if i == 0 { path.move(to: cg) } else { path.addLine(to: cg) }
+                }
+                path.closeSubpath()
+                if path.contains(tapCG) {
+                    parent.onRoomTap(room)
+                    return
+                }
+            }
+        }
+
         @objc func handleEditPan(_ g: UIPanGestureRecognizer) {
             guard parent.editState != nil, let mv = g.view as? MKMapView else { return }
             switch g.state {
@@ -1130,6 +1187,8 @@ final class FloorRoomsRenderer: MKOverlayRenderer {
     var editState: BuildingEditState?
 
     override func draw(_ mapRect: MKMapRect, zoomScale: MKZoomScale, in ctx: CGContext) {
+        let strokeColor = UIColor(white: 0.25, alpha: 0.9).cgColor
+        let lineWidth = 2.0 / zoomScale
         for room in rooms {
             guard let raw = room.polygonGlobal, raw.count >= 3 else { continue }
             let coords: [CLLocationCoordinate2D] = editState.map { e in
@@ -1143,29 +1202,21 @@ final class FloorRoomsRenderer: MKOverlayRenderer {
             }
             path.closeSubpath()
 
-            let color = Self.color(for: room.type.rawValue)
             ctx.addPath(path)
-            ctx.setFillColor(color.withAlphaComponent(0.75).cgColor)
+            ctx.setFillColor(Self.color(for: room.type.rawValue).withAlphaComponent(0.85).cgColor)
             ctx.fillPath()
             ctx.addPath(path)
-            ctx.setStrokeColor(color.withAlphaComponent(0.95).cgColor)
-            ctx.setLineWidth(1.5 / zoomScale)
+            ctx.setStrokeColor(strokeColor)
+            ctx.setLineWidth(lineWidth)
             ctx.strokePath()
         }
     }
 
     static func color(for type: String) -> UIColor {
         switch type {
-        case "classroom":   return UIColor(red: 0.22, green: 0.72, blue: 0.42, alpha: 1)
-        case "office":      return UIColor(red: 0.35, green: 0.60, blue: 0.90, alpha: 1)
-        case "meetingRoom": return UIColor(red: 0.60, green: 0.40, blue: 0.90, alpha: 1)
-        case "restroom":    return UIColor(red: 0.20, green: 0.70, blue: 0.90, alpha: 1)
-        case "restaurant":  return UIColor(red: 1.00, green: 0.78, blue: 0.20, alpha: 1)
-        case "shop":        return UIColor(red: 1.00, green: 0.50, blue: 0.50, alpha: 1)
-        case "entrance":    return UIColor(red: 1.00, green: 0.62, blue: 0.22, alpha: 1)
-        case "exit":        return UIColor(red: 0.90, green: 0.28, blue: 0.28, alpha: 1)
-        case "hallway":     return UIColor(red: 0.88, green: 0.88, blue: 0.88, alpha: 1)
-        default:            return UIColor(red: 0.94, green: 0.94, blue: 0.96, alpha: 1)
+        case "hallway":  return UIColor(red: 0.62, green: 0.82, blue: 0.95, alpha: 1)  // corridors
+        case "restroom": return UIColor(red: 1.00, green: 0.65, blue: 0.25, alpha: 1)  // bathrooms
+        default:         return UIColor(red: 0.90, green: 0.90, blue: 0.92, alpha: 1)  // rooms
         }
     }
 }
