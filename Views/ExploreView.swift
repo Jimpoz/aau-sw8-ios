@@ -332,6 +332,18 @@ private struct RoomsListView: View {
 
     @StateObject private var service = FloorPlanService()
     @EnvironmentObject private var mapNav: MapNavigationCoordinator
+    @State private var selectedType: RoomType?
+
+    private var availableTypes: [RoomType] {
+        let unique = Set(service.rooms.map { $0.type })
+        return unique.sorted { roomTypeLabel($0) < roomTypeLabel($1) }
+    }
+
+    private var filteredRooms: [Room] {
+        let base = selectedType.map { t in service.rooms.filter { $0.type == t } }
+            ?? service.rooms
+        return base.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
 
     var body: some View {
         ScrollView {
@@ -351,7 +363,16 @@ private struct RoomsListView: View {
                         .foregroundStyle(Color.slate500)
                         .padding(.horizontal, 16)
                 }
-                ForEach(service.rooms.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }) { room in
+                if availableTypes.count > 1 {
+                    typeFilterBar
+                }
+                if !service.rooms.isEmpty && filteredRooms.isEmpty {
+                    Text("No rooms match this filter.")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Color.slate500)
+                        .padding(.horizontal, 16)
+                }
+                ForEach(filteredRooms) { room in
                     RoomRow(room: room, onNavigate: { navigateToRoom(room) })
                         .padding(.horizontal, 16)
                 }
@@ -362,6 +383,22 @@ private struct RoomsListView: View {
         .navigationTitle(navTitle)
         .navigationBarTitleDisplayMode(.inline)
         .task { await service.fetchFloorGeometry(floorId: floor.id) }
+    }
+
+    private var typeFilterBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                FilterChip(label: "All", isSelected: selectedType == nil) {
+                    selectedType = nil
+                }
+                ForEach(availableTypes, id: \.self) { type in
+                    FilterChip(label: roomTypeLabel(type), isSelected: selectedType == type) {
+                        selectedType = (selectedType == type) ? nil : type
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+        }
     }
 
     private var navTitle: String {
@@ -409,7 +446,7 @@ private struct RoomRow: View {
                 Text(room.name)
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Color.slate800)
-                Text(prettyType(room.type))
+                Text(roomTypeLabel(room.type))
                     .font(.system(size: 12))
                     .foregroundStyle(Color.slate500)
             }
@@ -444,19 +481,43 @@ private struct RoomRow: View {
         }
     }
 
-    private func prettyType(_ type: RoomType) -> String {
-        switch type {
-        case .classroom:   return "Classroom"
-        case .office:      return "Office"
-        case .meetingRoom: return "Meeting room"
-        case .restroom:    return "Restroom"
-        case .restaurant:  return "Cafeteria"
-        case .shop:        return "Shop"
-        case .hallway:     return "Corridor"
-        case .entrance:    return "Entrance"
-        case .exit:        return "Exit"
-        default:           return "Space"
+}
+
+private func roomTypeLabel(_ type: RoomType) -> String {
+    switch type {
+    case .classroom:   return "Classroom"
+    case .office:      return "Office"
+    case .meetingRoom: return "Meeting room"
+    case .restroom:    return "Restroom"
+    case .restaurant:  return "Cafeteria"
+    case .shop:        return "Shop"
+    case .hallway:     return "Corridor"
+    case .entrance:    return "Entrance"
+    case .exit:        return "Exit"
+    default:           return "Space"
+    }
+}
+
+private struct FilterChip: View {
+    let label: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 12, weight: .semibold))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .foregroundStyle(isSelected ? .white : Color.slate700)
+                .background(
+                    Capsule().fill(isSelected ? Color.blue600 : Color.white)
+                )
+                .overlay(
+                    Capsule().stroke(isSelected ? Color.clear : Color.slate200, lineWidth: 1)
+                )
         }
+        .buttonStyle(.plain)
     }
 }
 
