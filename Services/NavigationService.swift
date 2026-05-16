@@ -23,19 +23,26 @@ class NavigationService: ObservableObject {
         self.session = URLSession.shared
     }
     
-    /// Compute fastest path between two spaces
-    func computeRoute(from startSpaceId: String, to endSpaceId: String) async {
+    func computeRoute(
+        from startSpaceId: String,
+        to endSpaceId: String,
+        avoidStairs: Bool = false,
+        elevatorsOnly: Bool = false
+    ) async {
         DispatchQueue.main.async {
             self.isLoading = true
             self.error = nil
         }
-        
+
         let endpoint = baseURL.appendingPathComponent("navigate")
         var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false)
-        components?.queryItems = [
+        var items: [URLQueryItem] = [
             URLQueryItem(name: "from", value: startSpaceId),
             URLQueryItem(name: "to", value: endSpaceId)
         ]
+        if avoidStairs   { items.append(URLQueryItem(name: "avoid_stairs",   value: "true")) }
+        if elevatorsOnly { items.append(URLQueryItem(name: "elevators_only", value: "true")) }
+        components?.queryItems = items
         
         guard let url = components?.url else {
             DispatchQueue.main.async {
@@ -84,7 +91,13 @@ class NavigationService: ObservableObject {
         }
     }
 
-    func computeRoute(fromLatitude lat: Double, longitude lon: Double, to endSpaceId: String) async {
+    func computeRoute(
+        fromLatitude lat: Double,
+        longitude lon: Double,
+        to endSpaceId: String,
+        avoidStairs: Bool = false,
+        elevatorsOnly: Bool = false
+    ) async {
         DispatchQueue.main.async {
             self.isLoading = true
             self.error = nil
@@ -122,7 +135,12 @@ class NavigationService: ObservableObject {
                 }
                 return
             }
-            await computeRoute(from: first.id, to: endSpaceId)
+            await computeRoute(
+                from: first.id,
+                to: endSpaceId,
+                avoidStairs: avoidStairs,
+                elevatorsOnly: elevatorsOnly
+            )
         } catch {
             DispatchQueue.main.async {
                 self.error = "Failed to resolve nearest space: \(error.localizedDescription)"
@@ -161,7 +179,6 @@ class NavigationService: ObservableObject {
         }
     }
     
-    // Legacy helper removed; server returns detailed steps with instructions and coordinates.
     
     private func inferInstruction(from prev: String?, current: String, to next: String?) -> String {
         if prev == nil {
@@ -174,9 +191,7 @@ class NavigationService: ObservableObject {
     }
 }
 
-// MARK: - Models
 
-// Server route decoding
 private struct ServerRouteStep: Decodable {
     let space_id: String
     let display_name: String?

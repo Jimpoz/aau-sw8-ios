@@ -125,6 +125,9 @@ struct FloorPlanView: View {
     @State private var editError: String?
     @State private var showEditScopeChoice = false
 
+    @AppStorage("nav.avoidStairs")   private var prefAvoidStairs:   Bool = true
+    @AppStorage("nav.elevatorsOnly") private var prefElevatorsOnly: Bool = false
+
     var body: some View {
         ZStack {
             Color.gray.opacity(0.05).ignoresSafeArea()
@@ -662,9 +665,6 @@ struct FloorPlanView: View {
         let userLoc0 = userLocation
 
         Task {
-            // Use the suggestion the user already picked; only re-search when
-            // routing from free-text (the "Get directions" prompt).
-            let top: SpaceSuggestion?
             if let suggestion {
                 top = suggestion
             } else {
@@ -672,9 +672,6 @@ struct FloorPlanView: View {
                 top = floorService.suggestions.first
             }
 
-            // If we resolved the destination and know where the user is, gate
-            // on distance to the *destination's* building — not just whatever
-            // building happens to be nearest.
             if let top, let loc = userLoc0 {
                 let building = top.buildingId.flatMap { id in
                     knownNow.first(where: { $0.id == id })
@@ -702,9 +699,14 @@ struct FloorPlanView: View {
                 }
             }
 
-            // Close enough (or location unknown) — try the indoor route.
             if let top, let loc = userLoc0 {
-                await navigationService.computeRoute(fromLatitude: loc.latitude, longitude: loc.longitude, to: top.id)
+                await navigationService.computeRoute(
+                    fromLatitude: loc.latitude,
+                    longitude: loc.longitude,
+                    to: top.id,
+                    avoidStairs: prefAvoidStairs,
+                    elevatorsOnly: prefElevatorsOnly
+                )
                 if let route = navigationService.currentRoute {
                     let steps = route.steps.map { $0.instruction }
                     await MainActor.run {
