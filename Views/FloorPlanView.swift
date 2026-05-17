@@ -1567,18 +1567,25 @@ private struct BottomRouteCard: View {
     var onDismiss: () -> Void
     var onNavigate: () -> Void
 
+    private var isNavigating: Bool { navigation != nil }
+
     var body: some View {
         VStack(spacing: 12) {
             ZStack {
-                Capsule().fill(Color.gray.opacity(0.3)).frame(width: 44, height: 5)
+                Capsule()
+                    .fill(isNavigating ? Color.white.opacity(0.35) : Color.gray.opacity(0.3))
+                    .frame(width: 44, height: 5)
                 HStack {
                     Spacer()
                     Button(action: onDismiss) {
                         Image(systemName: "xmark")
                             .font(.system(size: 13, weight: .bold))
-                            .foregroundColor(.gray)
+                            .foregroundColor(isNavigating ? .white : .gray)
                             .padding(8)
-                            .background(Color.gray.opacity(0.12), in: Circle())
+                            .background(
+                                (isNavigating ? Color.white.opacity(0.18) : Color.gray.opacity(0.12)),
+                                in: Circle()
+                            )
                     }
                 }
             }
@@ -1589,20 +1596,20 @@ private struct BottomRouteCard: View {
                         .font(.system(size: 22, weight: .heavy))
                         .foregroundColor(.white)
                         .frame(width: 44, height: 44)
-                        .background(Color.blue, in: Circle())
+                        .background(Color.white.opacity(0.18), in: Circle())
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text(nav.distanceLabel)
-                            .font(.system(size: 11, weight: .heavy))
-                            .foregroundColor(.blue)
+                            .font(.system(size: 12, weight: .heavy))
+                            .foregroundColor(.white.opacity(0.85))
                             .textCase(.uppercase)
                         Text(nav.instruction)
                             .font(.system(size: 16, weight: .bold))
-                            .foregroundColor(.black)
+                            .foregroundColor(.white)
                             .lineLimit(2)
                         Text("\(nav.remainingSteps) step\(nav.remainingSteps == 1 ? "" : "s") left  •  \(destination.title)")
                             .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(.gray)
+                            .foregroundColor(.white.opacity(0.75))
                             .lineLimit(1)
                     }
 
@@ -1649,9 +1656,31 @@ private struct BottomRouteCard: View {
             }
         }
         .padding(14)
-        .background(Color.white, in: RoundedRectangle(cornerRadius: 24))
-        .overlay(RoundedRectangle(cornerRadius: 24).stroke(Color.gray.opacity(0.2)))
-        .shadow(color: Color.black.opacity(0.12), radius: 24, x: 0, y: 12)
+        .background(cardBackground)
+        .overlay(
+            RoundedRectangle(cornerRadius: 24)
+                .stroke(isNavigating ? Color.white.opacity(0.18) : Color.gray.opacity(0.2))
+        )
+        .shadow(
+            color: (isNavigating ? Color.blue.opacity(0.35) : Color.black.opacity(0.12)),
+            radius: isNavigating ? 18 : 24,
+            x: 0,
+            y: isNavigating ? 10 : 12
+        )
+    }
+
+    @ViewBuilder
+    private var cardBackground: some View {
+        if isNavigating {
+            LinearGradient(
+                colors: [Color(red: 0.10, green: 0.36, blue: 0.86),
+                         Color(red: 0.07, green: 0.27, blue: 0.70)],
+                startPoint: .topLeading, endPoint: .bottomTrailing
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 24))
+        } else {
+            Color.white.clipShape(RoundedRectangle(cornerRadius: 24))
+        }
     }
 }
 
