@@ -86,7 +86,7 @@ struct CameraEntryView: View {
             }
             .frame(maxWidth: .infinity)
             .padding(20)
-            .background(.white, in: RoundedRectangle(cornerRadius: 20))
+            .background(Color.cardSurface, in: RoundedRectangle(cornerRadius: 20))
             .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.slate100))
         }
     }
@@ -137,7 +137,7 @@ struct CameraEntryView: View {
                     showStub = .findLocation
                 }
             }
-            .background(.white, in: RoundedRectangle(cornerRadius: 18))
+            .background(Color.cardSurface, in: RoundedRectangle(cornerRadius: 18))
             .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.slate100))
         }
     }

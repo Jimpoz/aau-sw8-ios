@@ -133,7 +133,7 @@ private struct ExploreCampusView: View {
                 Spacer()
             }
             .padding(14)
-            .background(.white, in: RoundedRectangle(cornerRadius: 16))
+            .background(Color.cardSurface, in: RoundedRectangle(cornerRadius: 16))
             .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.slate100))
             .padding(.horizontal, 16)
         }
@@ -191,7 +191,7 @@ private struct DrillRow<Destination: View>: View {
             .buttonStyle(.plain)
         }
         .padding(14)
-        .background(.white, in: RoundedRectangle(cornerRadius: 18))
+        .background(Color.cardSurface, in: RoundedRectangle(cornerRadius: 18))
         .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.slate100))
         .shadow(color: .black.opacity(0.05), radius: 10, x: 0, y: 5)
     }
@@ -461,7 +461,7 @@ private struct RoomRow: View {
             .buttonStyle(.plain)
         }
         .padding(14)
-        .background(.white, in: RoundedRectangle(cornerRadius: 18))
+        .background(Color.cardSurface, in: RoundedRectangle(cornerRadius: 18))
         .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.slate100))
         .shadow(color: .black.opacity(0.05), radius: 10, x: 0, y: 5)
     }
@@ -511,7 +511,7 @@ private struct FilterChip: View {
                 .padding(.vertical, 7)
                 .foregroundStyle(isSelected ? .white : Color.slate700)
                 .background(
-                    Capsule().fill(isSelected ? Color.blue600 : Color.white)
+                    Capsule().fill(isSelected ? Color.blue600 : Color.cardSurface)
                 )
                 .overlay(
                     Capsule().stroke(isSelected ? Color.clear : Color.slate200, lineWidth: 1)

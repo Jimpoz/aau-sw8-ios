@@ -109,6 +109,7 @@ struct FloorPlanView: View {
     @State private var locationAccuracy: Double?
     @State private var showFloorOverlay  = false
     @State private var currentBuildingId: String?
+    @State private var currentBuildingOrgId: String?
     @State private var currentBuildingCoordinate: CLLocationCoordinate2D?
     @State private var lastBuildingId: String?
     @State private var lastBuildingCoordinate: CLLocationCoordinate2D?
@@ -149,6 +150,7 @@ struct FloorPlanView: View {
                     self.showFloorOverlay  = true
                     if changedBuilding {
                         loadFloorsAndOverlay(buildingId: buildingId)
+                        refreshCurrentBuildingOrgId()
                     } else {
                         loadBuildingFloorData(buildingId: buildingId)
                     }
@@ -160,6 +162,7 @@ struct FloorPlanView: View {
                     }
                     self.showFloorOverlay  = false
                     self.currentBuildingId = nil
+                    self.currentBuildingOrgId = nil
                     self.currentBuildingCoordinate = nil
                     barometer.stop()
                 },
@@ -541,6 +544,7 @@ struct FloorPlanView: View {
             floorService.rooms = []
             showFloorOverlay = true
             loadFloorsAndOverlay(buildingId: pending)
+            refreshCurrentBuildingOrgId()
             mapNav.pendingBuildingCoordinate = nil
             mapNav.pendingBuildingId = nil
             mapNav.pendingBuildingName = nil
@@ -556,6 +560,7 @@ struct FloorPlanView: View {
             floorService.rooms = []
             showFloorOverlay = true
             loadFloorsAndOverlay(buildingId: pending)
+            refreshCurrentBuildingOrgId()
             mapNav.pendingBuildingCoordinate = nil
             mapNav.pendingBuildingId = nil
             mapNav.pendingBuildingName = nil
@@ -567,14 +572,34 @@ struct FloorPlanView: View {
         floorService.rooms = []
         showFloorOverlay = true
         loadFloorsAndOverlay(buildingId: pending)
+        refreshCurrentBuildingOrgId()
         mapNav.pendingBuildingCoordinate = nil
         mapNav.pendingBuildingId = nil
         mapNav.pendingBuildingName = nil
     }
 
     private var canEditBuildings: Bool {
-        guard let role = authService.principal?.role else { return false }
-        return role == "editor" || role == "owner"
+        guard let role = authService.principal?.role,
+              role == "editor" || role == "owner" else { return false }
+        guard let activeOrg = authService.principal?.organizationId,
+              let buildingOrg = currentBuildingOrgId else { return false }
+        return activeOrg == buildingOrg
+    }
+
+    private func refreshCurrentBuildingOrgId() {
+        guard let id = currentBuildingId else {
+            currentBuildingOrgId = nil
+            return
+        }
+        currentBuildingOrgId = nil
+        Task {
+            let detail = await floorService.fetchBuildingDetail(buildingId: id)
+            await MainActor.run {
+                if currentBuildingId == id {
+                    currentBuildingOrgId = detail?.organizationId
+                }
+            }
+        }
     }
 
     private func beginEdit(scope: BuildingEditScope) async {
@@ -583,8 +608,6 @@ struct FloorPlanView: View {
         isPreparingEdit = true
         defer { isPreparingEdit = false }
 
-        // Org check is done off the building either way — the floor's owning
-        // org is the building's org.
         guard let detail = await floorService.fetchBuildingDetail(buildingId: buildingId) else {
             editError = "Couldn't load building details for editing."
             return
@@ -1256,6 +1279,7 @@ final class FloorRoomsRenderer: MKOverlayRenderer {
         let strokeColor = UIColor(white: 0.25, alpha: 0.9).cgColor
         let lineWidth = 2.0 / zoomScale
         for room in rooms {
+            if room.type == .hallway { continue }
             guard let raw = room.polygonGlobal, raw.count >= 3 else { continue }
             let coords: [CLLocationCoordinate2D] = editState.map { e in
                 raw.map { MapViewWithOverlay.applyEditTransform($0, e) }

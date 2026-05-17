@@ -50,7 +50,7 @@ struct AssistantView: View {
                     )
             }
             .padding(.horizontal, 16).padding(.vertical, 12)
-            .background(.white)
+            .background(Color.cardSurface)
             .overlay(Rectangle().frame(height: 1).foregroundStyle(Color.slate100), alignment: .bottom)
 
             // Messages
@@ -64,7 +64,7 @@ struct AssistantView: View {
                                         .font(.system(size: 14))
                                         .foregroundStyle(Color.slate700)
                                         .padding(12)
-                                        .background(Color.white, in: RoundedRectangle(cornerRadius: 16))
+                                        .background(Color.cardSurface, in: RoundedRectangle(cornerRadius: 16))
                                         .overlay(
                                             RoundedRectangle(cornerRadius: 16)
                                                 .stroke(Color.slate100)
@@ -182,7 +182,7 @@ struct AssistantView: View {
                 )
             }
             .padding(.horizontal, 16).padding(.vertical, 12)
-            .background(.white)
+            .background(Color.cardSurface)
             .overlay(Rectangle().frame(height: 1).foregroundStyle(Color.slate100), alignment: .top)
         }
         .background(Color.slate50)

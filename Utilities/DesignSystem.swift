@@ -52,7 +52,7 @@ enum DS {
     static let corner: CGFloat = 20
 
     static func cardBackground() -> some ShapeStyle {
-        Color.white
+        Color.cardSurface
     }
 
     static func cardShadow() -> some ViewModifier {
