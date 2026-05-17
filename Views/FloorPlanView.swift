@@ -507,6 +507,30 @@ struct FloorPlanView: View {
         navigationService.currentRoute = nil
         routeCoordinates = []
         routeDestination = nil
+        pendingRouteSuggestion = nil
+        isNavigating = false
+        isResolvingRoute = false
+    }
+
+    private func checkArrival() {
+        guard let route = navigationService.currentRoute,
+              let user = userLocation else { return }
+        let arrivalRadius: CLLocationDistance = 5
+
+        let endCoord: CLLocationCoordinate2D?
+        if let last = route.polyline.last, last.count >= 2 {
+            endCoord = CLLocationCoordinate2D(latitude: last[0], longitude: last[1])
+        } else {
+            endCoord = route.steps.reversed().lazy
+                .compactMap { $0.coordinate }
+                .first
+        }
+        guard let end = endCoord else { return }
+        let userLoc = CLLocation(latitude: user.latitude, longitude: user.longitude)
+        let endLoc = CLLocation(latitude: end.latitude, longitude: end.longitude)
+        if userLoc.distance(from: endLoc) <= arrivalRadius {
+            cancelRoute()
+        }
     }
 
     private func rebuildRouteCoordinates(_ route: NavigationRoute?) {
