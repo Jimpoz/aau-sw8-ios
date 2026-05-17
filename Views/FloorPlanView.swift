@@ -448,6 +448,12 @@ struct FloorPlanView: View {
         }
         .onChange(of: mapNav.pendingBuildingId) { _ in consumePendingBuildingTarget() }
         .onChange(of: floorService.buildings.count) { _ in consumePendingBuildingTarget() }
+        .onChange(of: mapNav.selectedTab) { newTab in
+            guard newTab == .floorPlan,
+                  showFloorOverlay,
+                  let buildingId = currentBuildingId else { return }
+            loadBuildingFloorData(buildingId: buildingId)
+        }
         .onChange(of: navigationService.currentRoute) { route in
             rebuildRouteCoordinates(route)
         }
@@ -680,6 +686,9 @@ struct FloorPlanView: View {
         let userLoc0 = userLocation
 
         Task {
+
+            let top: Suggestion?
+
             if let suggestion {
                 top = suggestion
             } else {
