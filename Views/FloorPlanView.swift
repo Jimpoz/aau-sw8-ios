@@ -687,7 +687,7 @@ struct FloorPlanView: View {
 
         Task {
 
-            let top: Suggestion?
+            let top: SpaceSuggestion?
 
             if let suggestion {
                 top = suggestion
