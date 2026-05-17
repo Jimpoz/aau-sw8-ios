@@ -116,8 +116,6 @@ struct FloorPlanView: View {
     @State private var visitedBuildings: [BuildingLocator] = []
     @State private var routeDestination: RouteDestination?
     @State private var pendingRouteSuggestion: SpaceSuggestion?
-    @State private var isAskingForDirections = false
-    @State private var directionsPrompt = ""
     @State private var isResolvingRoute = false
     @State private var isNavigating = false
     @State private var editState: BuildingEditState?
@@ -213,17 +211,6 @@ struct FloorPlanView: View {
 
         .safeAreaInset(edge: .top) {
             VStack(spacing: 6) {
-                if let upcoming = nextStep() {
-                    NextStepBanner(
-                        instruction: upcoming.step.instruction,
-                        distanceMeters: upcoming.distance,
-                        remainingSteps: upcoming.remaining,
-                        onCancel: cancelRoute
-                    )
-                    .padding(.horizontal, 16)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                }
-
                 SearchBar(text: $searchText, onSearch: handleSearch)
                     .padding(.horizontal, 16)
 
@@ -322,24 +309,6 @@ struct FloorPlanView: View {
             } else {
                 VStack(spacing: 8) {
                     HStack(spacing: 10) {
-                        Button {
-                            directionsPrompt = ""
-                            isAskingForDirections = true
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "signpost.right.fill")
-                                    .font(.system(size: 14, weight: .bold))
-                                Text("Directions")
-                                    .font(.system(size: 13, weight: .semibold))
-                            }
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 10)
-                            .foregroundStyle(.white)
-                            .background(Color.blue, in: Capsule())
-                            .shadow(color: Color.blue.opacity(0.35), radius: 10, x: 0, y: 6)
-                        }
-                        .padding(.leading, 16)
-
                         if showFloorOverlay && canEditBuildings {
                             Button {
                                 showEditScopeChoice = true
@@ -361,6 +330,7 @@ struct FloorPlanView: View {
                                 .shadow(color: Color.orange.opacity(0.35), radius: 10, x: 0, y: 6)
                             }
                             .disabled(isPreparingEdit)
+                            .padding(.leading, 16)
                         }
 
                         Spacer()
@@ -386,17 +356,21 @@ struct FloorPlanView: View {
                     }
 
                     if let dest = routeDestination {
-                        BottomRouteCard(destination: dest, onDismiss: {
-                            routeDestination = nil
-                            pendingRouteSuggestion = nil
-                            searchText = ""
-                            if isNavigating {
-                                isNavigating = false
-                                mapProxy.stopFollowingUser()
+                        let progress: NavigationProgress? = nextStep().map {
+                            NavigationProgress(
+                                instruction: $0.step.instruction,
+                                distanceMeters: $0.distance,
+                                remainingSteps: $0.remaining
+                            )
+                        }
+                        BottomRouteCard(
+                            destination: dest,
+                            navigation: progress,
+                            onDismiss: cancelRoute,
+                            onNavigate: {
+                                resolveRoute(to: dest.title, suggestion: pendingRouteSuggestion)
                             }
-                        }, onNavigate: {
-                            resolveRoute(to: dest.title, suggestion: pendingRouteSuggestion)
-                        })
+                        )
                         .padding(.horizontal, 16)
                     }
                 }
@@ -406,13 +380,6 @@ struct FloorPlanView: View {
         }
 
         .navigationTitle("Floor Plan")
-        .alert("Get directions", isPresented: $isAskingForDirections) {
-            TextField("e.g. A101, Cafeteria, Library", text: $directionsPrompt)
-            Button("Go") { askForDirections() }
-            Button("Cancel", role: .cancel) { }
-        } message: {
-            Text("Type where you want to go. The assistant will produce step-by-step directions from your current location.")
-        }
         .confirmationDialog("What do you want to edit?", isPresented: $showEditScopeChoice, titleVisibility: .visible) {
             Button("Edit Building") { Task { await beginEdit(scope: .building) } }
             Button("Edit This Floor") { Task { await beginEdit(scope: .floor) } }
@@ -508,6 +475,10 @@ struct FloorPlanView: View {
         routeCoordinates = []
         routeDestination = nil
         pendingRouteSuggestion = nil
+        searchText = ""
+        if isNavigating {
+            mapProxy.stopFollowingUser()
+        }
         isNavigating = false
         isResolvingRoute = false
     }
@@ -716,13 +687,6 @@ struct FloorPlanView: View {
         } catch {
             editError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
-    }
-
-    private func askForDirections() {
-        let dest = directionsPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !dest.isEmpty else { return }
-        searchText = dest
-        resolveRoute(to: dest)
     }
 
     private func resolveRoute(to destination: String, suggestion: SpaceSuggestion? = nil) {
@@ -1344,61 +1308,15 @@ final class FloorRoomsRenderer: MKOverlayRenderer {
 }
 
 
-private struct NextStepBanner: View {
+struct NavigationProgress {
     let instruction: String
     let distanceMeters: CLLocationDistance
     let remainingSteps: Int
-    let onCancel: () -> Void
 
-    private var distanceLabel: String {
+    var distanceLabel: String {
         if distanceMeters < 10 { return "Now" }
         if distanceMeters < 1000 { return "In \(Int(distanceMeters)) m" }
         return String(format: "In %.1f km", distanceMeters / 1000)
-    }
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            Image(systemName: "arrow.turn.up.right")
-                .font(.system(size: 22, weight: .heavy))
-                .foregroundStyle(.white)
-                .frame(width: 44, height: 44)
-                .background(.white.opacity(0.18), in: Circle())
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(distanceLabel)
-                    .font(.system(size: 12, weight: .heavy))
-                    .foregroundStyle(.white.opacity(0.85))
-                    .textCase(.uppercase)
-                Text(instruction)
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(.white)
-                    .lineLimit(2)
-                Text("\(remainingSteps) step\(remainingSteps == 1 ? "" : "s") left")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.75))
-            }
-
-            Spacer(minLength: 8)
-
-            Button(action: onCancel) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 13, weight: .heavy))
-                    .foregroundStyle(.white)
-                    .padding(8)
-                    .background(.white.opacity(0.18), in: Circle())
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(12)
-        .background(
-            LinearGradient(
-                colors: [Color(red: 0.10, green: 0.36, blue: 0.86),
-                         Color(red: 0.07, green: 0.27, blue: 0.70)],
-                startPoint: .topLeading, endPoint: .bottomTrailing
-            ),
-            in: RoundedRectangle(cornerRadius: 16)
-        )
-        .shadow(color: .black.opacity(0.18), radius: 12, x: 0, y: 8)
     }
 }
 
@@ -1645,6 +1563,7 @@ private struct BuildingEditPanel: View {
 
 private struct BottomRouteCard: View {
     let destination: RouteDestination
+    let navigation: NavigationProgress?
     var onDismiss: () -> Void
     var onNavigate: () -> Void
 
@@ -1664,39 +1583,66 @@ private struct BottomRouteCard: View {
                 }
             }
 
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(destination.title)
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundColor(.black)
-                    HStack(spacing: 6) {
-                        Circle().fill(Color.green).frame(width: 8, height: 8)
-                        Text(destination.subtitle)
-                            .font(.system(size: 13, weight: .medium))
+            if let nav = navigation {
+                HStack(alignment: .center, spacing: 12) {
+                    Image(systemName: "arrow.turn.up.right")
+                        .font(.system(size: 22, weight: .heavy))
+                        .foregroundColor(.white)
+                        .frame(width: 44, height: 44)
+                        .background(Color.blue, in: Circle())
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(nav.distanceLabel)
+                            .font(.system(size: 11, weight: .heavy))
+                            .foregroundColor(.blue)
+                            .textCase(.uppercase)
+                        Text(nav.instruction)
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundColor(.black)
+                            .lineLimit(2)
+                        Text("\(nav.remainingSteps) step\(nav.remainingSteps == 1 ? "" : "s") left  •  \(destination.title)")
+                            .font(.system(size: 11, weight: .semibold))
                             .foregroundColor(.gray)
+                            .lineLimit(1)
+                    }
+
+                    Spacer(minLength: 8)
+                }
+            } else {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(destination.title)
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundColor(.black)
+                        HStack(spacing: 6) {
+                            Circle().fill(Color.green).frame(width: 8, height: 8)
+                            Text(destination.subtitle)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(.gray)
+                        }
+                    }
+                    Spacer()
+                    Button(action: onNavigate) {
+                        Image(systemName: "location.north.fill")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundColor(.white)
+                            .padding(12)
+                            .background(Color.blue, in: Circle())
+                            .shadow(color: Color.blue.opacity(0.35), radius: 10, x: 0, y: 6)
                     }
                 }
-                Spacer()
-                Button(action: onNavigate) {
-                    Image(systemName: "location.north.fill")
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundColor(.white)
-                        .padding(12)
-                        .background(Color.blue, in: Circle())
-                        .shadow(color: Color.blue.opacity(0.35), radius: 10, x: 0, y: 6)
-                }
-            }
 
-            if !destination.steps.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(destination.steps, id: \.self) { step in
-                            Text(step)
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundColor(.black)
-                                .padding(.vertical, 8).padding(.horizontal, 12)
-                                .background(Color.gray.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
-                                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.gray.opacity(0.2)))
+                if !destination.steps.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(destination.steps, id: \.self) { step in
+                                Text(step)
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundColor(.black)
+                                    .padding(.vertical, 8).padding(.horizontal, 12)
+                                    .background(Color.gray.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
+                                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.gray.opacity(0.2)))
+                            }
                         }
                     }
                 }
