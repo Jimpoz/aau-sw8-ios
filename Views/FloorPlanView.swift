@@ -274,6 +274,14 @@ struct FloorPlanView: View {
 
                     Spacer()
 
+                    if showFloorOverlay {
+                        RefreshButton(isRefreshing: floorService.isLoading) {
+                            if let buildingId = currentBuildingId {
+                                loadBuildingFloorData(buildingId: buildingId)
+                            }
+                        }
+                    }
+
                     ZoomControls(
                         zoomIn:  { mapProxy.zoomIn()  },
                         zoomOut: { mapProxy.zoomOut() }
@@ -548,7 +556,14 @@ struct FloorPlanView: View {
             return
         }
 
-        print("[NAV] pending building \(pending) not yet in locators (count=\(floorService.buildings.count)), waiting…")
+        print("[NAV] no coord for building \(pending), loading floors without flying")
+        currentBuildingId = pending
+        floorService.rooms = []
+        showFloorOverlay = true
+        loadFloorsAndOverlay(buildingId: pending)
+        mapNav.pendingBuildingCoordinate = nil
+        mapNav.pendingBuildingId = nil
+        mapNav.pendingBuildingName = nil
     }
 
     private var canEditBuildings: Bool {
@@ -1413,6 +1428,32 @@ private struct FloorSwitcher: View {
     }
 
     private func isSelected(_ label: String) -> Bool { selectedLabel == label }
+}
+
+private struct RefreshButton: View {
+    let isRefreshing: Bool
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            Image(systemName: "arrow.clockwise")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(.primary)
+                .frame(width: 42, height: 42)
+                .rotationEffect(.degrees(isRefreshing ? 360 : 0))
+                .animation(
+                    isRefreshing
+                        ? .linear(duration: 0.9).repeatForever(autoreverses: false)
+                        : .default,
+                    value: isRefreshing
+                )
+        }
+        .disabled(isRefreshing)
+        .background(Color.white, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.gray.opacity(0.2), lineWidth: 1))
+        .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 2)
+        .padding(.trailing, 8)
+    }
 }
 
 private struct ZoomControls: View {
