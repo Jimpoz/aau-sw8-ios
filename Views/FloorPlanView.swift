@@ -462,6 +462,7 @@ struct FloorPlanView: View {
         }
         .onReceive(locationManager.$lastLocation) { _ in
             rebuildRouteCoordinates(navigationService.currentRoute)
+            checkArrival()
         }
         .onReceive(locationManager.$lastLocation) { _ in syncFromLocationManager() }
         .onReceive(locationManager.$horizontalAccuracyMeters) { _ in syncFromLocationManager() }
@@ -510,11 +511,19 @@ struct FloorPlanView: View {
 
     private func rebuildRouteCoordinates(_ route: NavigationRoute?) {
         guard let r = route else { routeCoordinates = []; return }
-        let stepCoords = r.steps.compactMap { $0.coordinate }
-        if let user = userLocation {
-            routeCoordinates = [user] + stepCoords
+        let pathCoords: [CLLocationCoordinate2D]
+        if !r.polyline.isEmpty {
+            pathCoords = r.polyline.compactMap { pair in
+                guard pair.count >= 2 else { return nil }
+                return CLLocationCoordinate2D(latitude: pair[0], longitude: pair[1])
+            }
         } else {
-            routeCoordinates = stepCoords
+            pathCoords = r.steps.compactMap { $0.coordinate }
+        }
+        if let user = userLocation {
+            routeCoordinates = [user] + pathCoords
+        } else {
+            routeCoordinates = pathCoords
         }
     }
 
@@ -1279,7 +1288,6 @@ final class FloorRoomsRenderer: MKOverlayRenderer {
         let strokeColor = UIColor(white: 0.25, alpha: 0.9).cgColor
         let lineWidth = 2.0 / zoomScale
         for room in rooms {
-            if room.type == .hallway { continue }
             guard let raw = room.polygonGlobal, raw.count >= 3 else { continue }
             let coords: [CLLocationCoordinate2D] = editState.map { e in
                 raw.map { MapViewWithOverlay.applyEditTransform($0, e) }

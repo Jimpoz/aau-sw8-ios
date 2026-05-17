@@ -78,6 +78,7 @@ class NavigationService: ObservableObject {
                     from: serverRoute.from_space_id,
                     to: serverRoute.to_space_id,
                     path: serverRoute.steps.map { $0.space_id },
+                    polyline: serverRoute.polyline ?? [],
                     totalDistance: serverRoute.total_cost,
                     steps: navSteps
                 )
@@ -211,12 +212,14 @@ private struct ServerRoute: Decodable {
     let to_space_id: String
     let total_cost: Double
     let steps: [ServerRouteStep]
+    let polyline: [[Double]]?
 }
 
 struct NavigationRoute: Equatable {
     let from: String
     let to: String
     let path: [String]
+    let polyline: [[Double]]
     let totalDistance: Double
     let steps: [NavigationStep]
 }
