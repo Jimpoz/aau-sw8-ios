@@ -64,9 +64,11 @@ final class AssistantService: NSObject, ObservableObject, LLMChatting {
             coords = nil
         }
 
+        let effectiveCampusId = (context["campus_id"] as? String) ?? campusId
+
         let request = ChatRequest(
             user_query: userText,
-            campus_id: campusId,
+            campus_id: effectiveCampusId,
             building_id: buildingId,
             user_lat: y,
             user_lon: x,

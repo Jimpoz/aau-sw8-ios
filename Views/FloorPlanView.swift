@@ -94,6 +94,7 @@ struct BuildingEditState {
 struct FloorPlanView: View {
     @EnvironmentObject private var mapNav: MapNavigationCoordinator
     @EnvironmentObject private var authService: AuthService
+    @EnvironmentObject private var diContainer: DIContainer
     @StateObject private var vm          = FloorPlanViewModel()
     @StateObject private var floorService = FloorPlanService()
     @StateObject private var mapProxy    = MapActionProxy()
@@ -146,6 +147,13 @@ struct FloorPlanView: View {
                     self.currentBuildingId = buildingId
                     self.currentBuildingCoordinate = buildingCoord
                     self.showFloorOverlay  = true
+                    // Publish the active campus/building so other tabs
+                    // (the Assistant chat) scope their calls correctly
+                    // instead of falling back to AssistantService's
+                    // hardcoded init default.
+                    self.diContainer.currentBuildingId = buildingId
+                    self.diContainer.currentCampusId =
+                        floorService.buildings.first { $0.id == buildingId }?.campusId
                     if changedBuilding {
                         loadFloorsAndOverlay(buildingId: buildingId)
                         refreshCurrentBuildingOrgId()
@@ -162,6 +170,8 @@ struct FloorPlanView: View {
                     self.currentBuildingId = nil
                     self.currentBuildingOrgId = nil
                     self.currentBuildingCoordinate = nil
+                    self.diContainer.currentBuildingId = nil
+                    self.diContainer.currentCampusId = nil
                     barometer.stop()
                 },
                 onRoomTap: { room in
@@ -700,6 +710,16 @@ struct FloorPlanView: View {
         }
         if let bid = currentBuildingId {
             context["building_id"] = bid
+            // Scope to the building's campus, not the AssistantService
+            // init default. Falls back to whatever DIContainer last
+            // saw if the current building isn't in the locator list
+            // yet (race during initial load).
+            if let cid = floorService.buildings.first(where: { $0.id == bid })?.campusId
+                ?? diContainer.currentCampusId {
+                context["campus_id"] = cid
+            }
+        } else if let cid = diContainer.currentCampusId {
+            context["campus_id"] = cid
         }
 
         let knownNow = knownBuildings

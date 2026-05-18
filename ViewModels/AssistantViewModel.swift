@@ -58,6 +58,7 @@ final class AssistantViewModel: ObservableObject {
 
     private var llmService: LLMChatting?
     private var locationManager: LocationManager?
+    private weak var container: DIContainer?
     private var cancellables = Set<AnyCancellable>()
 
     private let audioEngine = AVAudioEngine()
@@ -77,6 +78,7 @@ final class AssistantViewModel: ObservableObject {
     func configure(with container: DIContainer) {
         self.llmService = container.llm
         self.locationManager = container.locationManager
+        self.container = container
         checkConnection()
     }
 
@@ -222,6 +224,13 @@ final class AssistantViewModel: ObservableObject {
             context["y"] = coord.latitude
         }
         
+        if let campusId = container?.currentCampusId {
+            context["campus_id"] = campusId
+        }
+        if let buildingId = container?.currentBuildingId {
+            context["building_id"] = buildingId
+        }
+
         Task {
             do {
                 let response = try await llmService.send(userText: text, context: context)

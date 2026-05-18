@@ -14,6 +14,7 @@ struct BuildingLocator: Identifiable, Hashable {
     let name: String
     let coordinate: CLLocationCoordinate2D
     let address: String?
+    let campusId: String?
     let organizationId: String?
     let organizationName: String?
     let isPublic: Bool
@@ -23,6 +24,7 @@ struct BuildingLocator: Identifiable, Hashable {
         name: String,
         coordinate: CLLocationCoordinate2D,
         address: String? = nil,
+        campusId: String? = nil,
         organizationId: String? = nil,
         organizationName: String? = nil,
         isPublic: Bool = false
@@ -31,6 +33,7 @@ struct BuildingLocator: Identifiable, Hashable {
         self.name = name
         self.coordinate = coordinate
         self.address = address
+        self.campusId = campusId
         self.organizationId = organizationId
         self.organizationName = organizationName
         self.isPublic = isPublic
@@ -99,7 +102,8 @@ class FloorPlanService: ObservableObject {
                     id: item.id,
                     name: item.name,
                     coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lng),
-                    address: item.address
+                    address: item.address,
+                    campusId: campusId
                 )
             }
             await MainActor.run { self.buildings = locators }
@@ -131,6 +135,7 @@ class FloorPlanService: ObservableObject {
                         longitude: item.origin_lng
                     ),
                     address: item.address,
+                    campusId: item.campus_id,
                     organizationId: item.organization_id,
                     organizationName: item.organization_name,
                     isPublic: item.is_public
@@ -425,6 +430,7 @@ private struct VisibleBuildingItem: Decodable {
     let id: String
     let name: String
     let address: String?
+    let campus_id: String?
     let organization_id: String?
     let organization_name: String?
     let is_public: Bool
