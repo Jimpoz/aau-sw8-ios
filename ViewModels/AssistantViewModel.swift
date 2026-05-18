@@ -8,6 +8,7 @@
 
 import Foundation
 import Combine
+import CoreLocation
 import SwiftUI
 import Speech
 import AVFoundation
@@ -80,6 +81,15 @@ final class AssistantViewModel: ObservableObject {
         self.locationManager = container.locationManager
         self.container = container
         checkConnection()
+        // Make sure we have the visible-buildings list cached so the
+        // chat tab can resolve campus_id from GPS even when the user
+        // opens the assistant directly without first visiting the map.
+        // Idempotent: bails out fast if the list is already populated.
+        Task { @MainActor in
+            if container.floorPlanService.buildings.isEmpty {
+                await container.floorPlanService.fetchVisibleBuildings()
+            }
+        }
     }
 
     func checkConnection() {
@@ -219,17 +229,35 @@ final class AssistantViewModel: ObservableObject {
         error = nil
         
         var context: [String: Any] = [:]
-        if let coord = locationManager?.lastLocation?.coordinate {
+        let userCoord = locationManager?.lastLocation?.coordinate
+        if let coord = userCoord {
             context["x"] = coord.longitude
             context["y"] = coord.latitude
         }
-        
-        if let campusId = container?.currentCampusId {
-            context["campus_id"] = campusId
+
+        var resolvedCampusId = container?.currentCampusId
+        var resolvedBuildingId = container?.currentBuildingId
+
+        if resolvedCampusId == nil,
+           let userCoord,
+           let buildings = container?.floorPlanService.buildings,
+           !buildings.isEmpty {
+            let userLoc = CLLocation(latitude: userCoord.latitude, longitude: userCoord.longitude)
+            let nearest = buildings.min { a, b in
+                let da = CLLocation(latitude: a.coordinate.latitude, longitude: a.coordinate.longitude)
+                    .distance(from: userLoc)
+                let db = CLLocation(latitude: b.coordinate.latitude, longitude: b.coordinate.longitude)
+                    .distance(from: userLoc)
+                return da < db
+            }
+            if let nearest {
+                resolvedCampusId = nearest.campusId
+                resolvedBuildingId = nearest.id
+            }
         }
-        if let buildingId = container?.currentBuildingId {
-            context["building_id"] = buildingId
-        }
+
+        if let cid = resolvedCampusId { context["campus_id"] = cid }
+        if let bid = resolvedBuildingId { context["building_id"] = bid }
 
         Task {
             do {
