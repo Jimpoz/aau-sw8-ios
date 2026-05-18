@@ -124,9 +124,10 @@ struct FloorPlanView: View {
     @State private var isSavingEdit = false
     @State private var editError: String?
     @State private var showEditScopeChoice = false
-
-    @AppStorage("nav.avoidStairs")   private var prefAvoidStairs:   Bool = true
-    @AppStorage("nav.elevatorsOnly") private var prefElevatorsOnly: Bool = false
+    
+    @AppStorage("nav.avoidStairs")    private var prefAvoidStairs:    Bool = false
+    @AppStorage("nav.elevatorsOnly")  private var prefElevatorsOnly:  Bool = false
+    @AppStorage("nav.accessibleOnly") private var prefAccessibleOnly: Bool = false
 
     var body: some View {
         ZStack {
@@ -769,7 +770,8 @@ struct FloorPlanView: View {
                     longitude: loc.longitude,
                     to: top.id,
                     avoidStairs: prefAvoidStairs,
-                    elevatorsOnly: prefElevatorsOnly
+                    elevatorsOnly: prefElevatorsOnly,
+                    accessibleOnly: prefAccessibleOnly
                 )
                 if let route = navigationService.currentRoute {
                     let steps = route.steps.map { $0.instruction }

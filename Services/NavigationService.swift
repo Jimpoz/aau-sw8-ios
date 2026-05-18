@@ -27,7 +27,8 @@ class NavigationService: ObservableObject {
         from startSpaceId: String,
         to endSpaceId: String,
         avoidStairs: Bool = false,
-        elevatorsOnly: Bool = false
+        elevatorsOnly: Bool = false,
+        accessibleOnly: Bool = false
     ) async {
         DispatchQueue.main.async {
             self.isLoading = true
@@ -40,8 +41,9 @@ class NavigationService: ObservableObject {
             URLQueryItem(name: "from", value: startSpaceId),
             URLQueryItem(name: "to", value: endSpaceId)
         ]
-        if avoidStairs   { items.append(URLQueryItem(name: "avoid_stairs",   value: "true")) }
-        if elevatorsOnly { items.append(URLQueryItem(name: "elevators_only", value: "true")) }
+        if avoidStairs    { items.append(URLQueryItem(name: "avoid_stairs",    value: "true")) }
+        if elevatorsOnly  { items.append(URLQueryItem(name: "elevators_only",  value: "true")) }
+        if accessibleOnly { items.append(URLQueryItem(name: "accessible_only", value: "true")) }
         components?.queryItems = items
         
         guard let url = components?.url else {
@@ -97,7 +99,8 @@ class NavigationService: ObservableObject {
         longitude lon: Double,
         to endSpaceId: String,
         avoidStairs: Bool = false,
-        elevatorsOnly: Bool = false
+        elevatorsOnly: Bool = false,
+        accessibleOnly: Bool = false
     ) async {
         DispatchQueue.main.async {
             self.isLoading = true
@@ -140,7 +143,8 @@ class NavigationService: ObservableObject {
                 from: first.id,
                 to: endSpaceId,
                 avoidStairs: avoidStairs,
-                elevatorsOnly: elevatorsOnly
+                elevatorsOnly: elevatorsOnly,
+                accessibleOnly: accessibleOnly
             )
         } catch {
             DispatchQueue.main.async {

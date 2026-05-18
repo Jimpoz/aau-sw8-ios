@@ -57,9 +57,10 @@ final class PedometerStats: ObservableObject {
 struct ProfileView: View {
     @EnvironmentObject private var themeSettings: ThemeSettings
     @EnvironmentObject private var authService: AuthService
-    @AppStorage("nav.avoidStairs")    private var avoidStairs: Bool = true
-    @AppStorage("nav.voiceGuidance")  private var voiceGuidance: Bool = false
-    @AppStorage("nav.elevatorsOnly")  private var elevatorsOnly: Bool = false
+    @AppStorage("nav.avoidStairs")    private var avoidStairs:    Bool = false
+    @AppStorage("nav.elevatorsOnly")  private var elevatorsOnly:  Bool = false
+    @AppStorage("nav.accessibleOnly") private var accessibleOnly: Bool = false
+    @AppStorage("nav.voiceGuidance")  private var voiceGuidance:  Bool = false
     @StateObject private var pedometer = PedometerStats()
     @State private var showRoomPhotoUpload: Bool = false
     @State private var showMfaSetup: Bool = false
@@ -127,9 +128,37 @@ struct ProfileView: View {
                     .overlay(Rectangle().frame(height: 1).foregroundStyle(Color.slate100), alignment: .bottom)
 
                     VStack(spacing: 16) {
-                        ToggleRow(title: "Avoid Stairs", isOn: $avoidStairs)
-                        ToggleRow(title: "Voice Guidance", isOn: $voiceGuidance)
-                        ToggleRow(title: "Use Elevators Only", isOn: $elevatorsOnly)
+                        // Accessible-only filters out non-accessible
+                        // spaces entirely. Independent of the vertical-
+                        // transport toggles below.
+                        ToggleRow(
+                            title: "Wheelchair Accessible Only",
+                            subtitle: "Route only through spaces marked accessible",
+                            isOn: $accessibleOnly
+                        )
+
+                        ToggleRow(
+                            title: "Avoid Stairs",
+                            subtitle: "Excludes staircases and escalators",
+                            isOn: Binding(
+                                get: { avoidStairs || elevatorsOnly },
+                                set: { newValue in if !elevatorsOnly { avoidStairs = newValue } }
+                            ),
+                            isEnabled: !elevatorsOnly
+                        )
+
+                        ToggleRow(
+                            title: "Use Elevators Only",
+                            subtitle: "Excludes stairs, escalators, and ramps",
+                            isOn: $elevatorsOnly
+                        )
+
+                        ToggleRow(
+                            title: "Voice Guidance",
+                            subtitle: "Coming soon",
+                            isOn: $voiceGuidance,
+                            isEnabled: false
+                        )
                     }
                     .padding(16)
                 }
@@ -313,16 +342,28 @@ private struct StatCard: View {
 
 private struct ToggleRow: View {
     let title: String
+    var subtitle: String? = nil
     @Binding var isOn: Bool
+    var isEnabled: Bool = true
+
     var body: some View {
-        HStack {
-            Text(title)
-                .font(.system(size: 14))
-                .foregroundStyle(Color.slate600)
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 14))
+                    .foregroundStyle(isEnabled ? Color.slate600 : Color.slate400)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.slate400)
+                }
+            }
             Spacer()
             Toggle("", isOn: $isOn)
                 .labelsHidden()
+                .disabled(!isEnabled)
         }
+        .opacity(isEnabled ? 1.0 : 0.55)
     }
 }
 
