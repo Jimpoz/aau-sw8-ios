@@ -426,6 +426,7 @@ struct FloorPlanView: View {
             if showFloorOverlay, let buildingId = currentBuildingId {
                 loadBuildingFloorData(buildingId: buildingId)
             }
+            rebuildRouteCoordinates(navigationService.currentRoute)
         }
         .onChange(of: mapNav.pendingBuildingId) { _ in consumePendingBuildingTarget() }
         .onChange(of: floorService.buildings.count) { _ in consumePendingBuildingTarget() }
@@ -515,22 +516,80 @@ struct FloorPlanView: View {
         }
     }
 
+    private var displayedFloorIndex: Int? {
+        let i = vm.selectedFloor
+        guard floorService.floors.indices.contains(i) else { return nil }
+        return floorService.floors[i].floorIndex
+    }
+
     private func rebuildRouteCoordinates(_ route: NavigationRoute?) {
         guard let r = route else { routeCoordinates = []; return }
+
+        let routeFloors = Set(r.steps.compactMap { $0.floorIndex })
+        let isMultiFloor = routeFloors.count > 1
+
+        let target = displayedFloorIndex
         let pathCoords: [CLLocationCoordinate2D]
-        if !r.polyline.isEmpty {
+
+        if !isMultiFloor, !r.polyline.isEmpty {
             pathCoords = r.polyline.compactMap { pair in
                 guard pair.count >= 2 else { return nil }
                 return CLLocationCoordinate2D(latitude: pair[0], longitude: pair[1])
             }
+        } else if let target {
+            pathCoords = sliceStepsForFloor(r.steps, displayedFloor: target)
         } else {
             pathCoords = r.steps.compactMap { $0.coordinate }
         }
-        if let user = userLocation {
+
+        let userOnThisFloor: Bool
+        if let target, let physical = barometer.currentFloorIndex {
+            userOnThisFloor = (physical == target)
+        } else {
+            userOnThisFloor = !isMultiFloor
+        }
+
+        if let user = userLocation, userOnThisFloor {
             routeCoordinates = [user] + pathCoords
         } else {
             routeCoordinates = pathCoords
         }
+    }
+
+    private func sliceStepsForFloor(
+        _ steps: [NavigationStep],
+        displayedFloor: Int
+    ) -> [CLLocationCoordinate2D] {
+        var result: [CLLocationCoordinate2D] = []
+        var prevFloor: Int? = nil
+
+        for (idx, step) in steps.enumerated() {
+            let f = step.floorIndex
+            let onThisFloor = (f == displayedFloor) || (f == nil && prevFloor == displayedFloor)
+            if onThisFloor, let coord = step.coordinate {
+                result.append(coord)
+                prevFloor = f ?? prevFloor
+                continue
+            }
+            prevFloor = f ?? prevFloor
+
+            if step.isVerticalTransport,
+               idx + 1 < steps.count,
+               steps[idx + 1].floorIndex == displayedFloor,
+               let coord = step.coordinate {
+                result.append(coord)
+                continue
+            }
+
+            if step.isVerticalTransport,
+               idx > 0,
+               steps[idx - 1].floorIndex == displayedFloor,
+               let coord = step.coordinate {
+                result.append(coord)
+                break
+            }
+        }
+        return result
     }
 
     private var knownBuildings: [BuildingLocator] {

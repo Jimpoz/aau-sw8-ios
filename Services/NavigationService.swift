@@ -69,10 +69,17 @@ class NavigationService: ObservableObject {
             let decoder = JSONDecoder()
             let serverRoute = try decoder.decode(ServerRoute.self, from: data)
 
-            // Map server steps into local NavigationStep objects with coordinates when available
             let navSteps: [NavigationStep] = serverRoute.steps.enumerated().map { idx, s in
                 let instr = s.instruction ?? (idx == 0 ? "Start at \(s.display_name ?? s.space_id)" : "Go to \(s.display_name ?? s.space_id)")
-                return NavigationStep(instruction: instr, spaceId: s.space_id, stepNumber: idx + 1, lat: s.centroid_lat, lon: s.centroid_lng)
+                return NavigationStep(
+                    instruction: instr,
+                    spaceId: s.space_id,
+                    stepNumber: idx + 1,
+                    lat: s.centroid_lat,
+                    lon: s.centroid_lng,
+                    floorIndex: s.floor_index,
+                    spaceType: s.space_type
+                )
             }
 
             DispatchQueue.main.async {
@@ -234,10 +241,17 @@ struct NavigationStep: Equatable {
     let stepNumber: Int
     let lat: Double?
     let lon: Double?
+    let floorIndex: Int?
+    let spaceType: String?
 
     var coordinate: CLLocationCoordinate2D? {
         guard let la = lat, let lo = lon else { return nil }
         return CLLocationCoordinate2D(latitude: la, longitude: lo)
+    }
+
+    var isVerticalTransport: Bool {
+        guard let t = spaceType?.uppercased() else { return false }
+        return t == "STAIRCASE" || t == "ELEVATOR" || t == "ESCALATOR" || t == "RAMP"
     }
 }
 
