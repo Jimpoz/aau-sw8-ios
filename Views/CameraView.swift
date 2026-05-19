@@ -12,16 +12,33 @@ struct CameraView: View {
     @StateObject private var vm = CameraViewModel()
     @EnvironmentObject private var container: DIContainer
     @EnvironmentObject private var mapNav: MapNavigationCoordinator
+    @EnvironmentObject private var authService: AuthService
 
     @State private var showDirections: Bool = false
     @State private var destinationQuery: String = ""
     @State private var directionText: String? = nil
     @State private var directionDistance: String? = nil
     @State private var isAskingDirections: Bool = false
+    @State private var capturedLandmarkFrame: UIImage?
+    @State private var isCapturingForLandmark: Bool = false
     @State private var findLocationMode: Bool = true
 
     private var isPreview: Bool {
         ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1"
+    }
+
+    private var canRegisterLandmark: Bool {
+        guard let role = authService.principal?.role?.lowercased() else { return false }
+        return role == "owner" || role == "editor"
+    }
+
+    private func captureForLandmark() {
+        guard !isCapturingForLandmark else { return }
+        isCapturingForLandmark = true
+        vm.captureNextFrame { image in
+            isCapturingForLandmark = false
+            capturedLandmarkFrame = image
+        }
     }
 
     var body: some View {
@@ -118,6 +135,32 @@ struct CameraView: View {
                             .overlay(Capsule().stroke(.white.opacity(0.12)))
                         }
 
+                        if canRegisterLandmark {
+                            Button {
+                                captureForLandmark()
+                            } label: {
+                                HStack(spacing: 6) {
+                                    if isCapturingForLandmark {
+                                        ProgressView()
+                                            .scaleEffect(0.6)
+                                            .tint(.white)
+                                            .frame(width: 14, height: 14)
+                                    } else {
+                                        Image(systemName: "plus.viewfinder")
+                                            .font(.system(size: 12, weight: .bold))
+                                    }
+                                    Text("Register Landmark")
+                                        .font(.system(size: 12, weight: .semibold))
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .foregroundStyle(.white)
+                                .background(.black.opacity(0.6), in: Capsule())
+                                .overlay(Capsule().stroke(Color.yellow.opacity(0.5)))
+                            }
+                            .disabled(isCapturingForLandmark)
+                        }
+
                         Button {
                             findLocationMode.toggle()
                         } label: {
@@ -167,6 +210,15 @@ struct CameraView: View {
                 Button("Cancel", role: .cancel) { }
             } message: {
                 Text("Type a destination. The assistant will guide you from your current location.")
+            }
+            .sheet(item: Binding(
+                get: { capturedLandmarkFrame.map { LandmarkCapture(image: $0) } },
+                set: { capturedLandmarkFrame = $0?.image }
+            )) { capture in
+                LandmarkRegistrationSheet(capturedImage: capture.image) { _ in
+                    capturedLandmarkFrame = nil
+                }
+                .environmentObject(container)
             }
             .onAppear {
                 vm.configure(with: container, coordinator: mapNav)
@@ -284,6 +336,11 @@ private struct PermissionOverlay: View {
         .overlay(RoundedRectangle(cornerRadius: 16).stroke(.white.opacity(0.12)))
         .padding()
     }
+}
+
+private struct LandmarkCapture: Identifiable {
+    let id = UUID()
+    let image: UIImage
 }
 
 private struct LocalizationToast: View {

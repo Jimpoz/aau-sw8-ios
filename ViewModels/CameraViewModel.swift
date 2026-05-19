@@ -8,6 +8,7 @@
 import AVFoundation
 import Combine
 import CoreGraphics
+import CoreImage
 import UIKit
 
 struct VisionLocationToast: Equatable, Identifiable {
@@ -33,6 +34,10 @@ final class CameraViewModel: NSObject, ObservableObject {
     private weak var container: DIContainer?
     private weak var mapNav: MapNavigationCoordinator?
 
+    private var pendingFrameCapture: ((UIImage?) -> Void)?
+    private let captureLock = NSLock()
+    private let frameConvertContext = CIContext()
+
     override init() {
         super.init()
         streamingService.$detections
@@ -52,6 +57,16 @@ final class CameraViewModel: NSObject, ObservableObject {
     func configure(with container: DIContainer, coordinator: MapNavigationCoordinator) {
         self.container = container
         self.mapNav = coordinator
+    }
+
+    /// Capture the next live frame as a UIImage. Used by the landmark
+    /// registration sheet to freeze "what the user is pointing at" the
+    /// moment they tap Register. The completion fires on the main
+    /// thread; only one capture can be pending at a time.
+    func captureNextFrame(_ completion: @escaping (UIImage?) -> Void) {
+        captureLock.lock()
+        pendingFrameCapture = completion
+        captureLock.unlock()
     }
 
     private func handleLocationSnap(_ location: VisionResolvedLocation) {
@@ -198,5 +213,23 @@ extension CameraViewModel: AVCaptureVideoDataOutputSampleBufferDelegate {
                        didOutput sampleBuffer: CMSampleBuffer,
                        from connection: AVCaptureConnection) {
         streamingService.sendFrame(sampleBuffer)
+
+        // Drain a one-shot capture request if the sheet asked for one.
+        // We grab the buffer's pixel data and convert it on the same
+        // queue (sessionQueue) the AVCapture delegate runs on, then
+        // hop to the main actor to deliver the UIImage.
+        captureLock.lock()
+        let pending = pendingFrameCapture
+        if pending != nil { pendingFrameCapture = nil }
+        captureLock.unlock()
+
+        guard let pending,
+              let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+            return
+        }
+        let ciImage = CIImage(cvPixelBuffer: imageBuffer).oriented(.right)
+        let cgImage = frameConvertContext.createCGImage(ciImage, from: ciImage.extent)
+        let uiImage = cgImage.map { UIImage(cgImage: $0) }
+        DispatchQueue.main.async { pending(uiImage) }
     }
 }
