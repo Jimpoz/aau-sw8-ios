@@ -885,8 +885,9 @@ struct FloorPlanView: View {
             await MainActor.run {
                 vm.availableFloors = summaries.map { $0.floorIndex }
                 vm.availableFloorLabels = summaries.map { floorLabel(for: $0) }
+                let pendingBaseline = mapNav.pendingFloorIndex
                 if !summaries.isEmpty {
-                    if let target = mapNav.pendingFloorIndex,
+                    if let target = pendingBaseline,
                        let i = summaries.firstIndex(where: { $0.floorIndex == target }) {
                         vm.selectedFloor = i
                         mapNav.pendingFloorIndex = nil
@@ -894,7 +895,10 @@ struct FloorPlanView: View {
                         vm.selectedFloor = summaries.firstIndex { $0.floorIndex == 0 } ?? 0
                     }
                 }
-                barometer.start(floors: summaries, baselineFloorIndex: 0)
+                barometer.start(
+                    floors: summaries,
+                    baselineFloorIndex: pendingBaseline ?? 0
+                )
             }
             if let active = activeFloorId(in: summaries) {
                 await floorService.fetchFloorGeometry(floorId: active)

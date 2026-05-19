@@ -13,4 +13,20 @@ struct DetectionBox: Identifiable {
     let rect: CGRect
     let label: String
     let confidence: Float
+    let isLandmarkMatch: Bool
+    let landmarkName: String?
+
+    init(
+        rect: CGRect,
+        label: String,
+        confidence: Float,
+        isLandmarkMatch: Bool = false,
+        landmarkName: String? = nil
+    ) {
+        self.rect = rect
+        self.label = label
+        self.confidence = confidence
+        self.isLandmarkMatch = isLandmarkMatch
+        self.landmarkName = landmarkName
+    }
 }

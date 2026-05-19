@@ -9,11 +9,25 @@ import CoreImage
 import Foundation
 import UIKit
 
+struct VisionResolvedLocation: Equatable {
+    let kind: String
+    let id: String
+    let name: String
+    let confidence: Double
+    let spaceId: String?
+    let buildingId: String?
+    let buildingName: String?
+    let campusId: String?
+    let floorId: String?
+    let floorIndex: Int?
+}
+
 final class VisionStreamingService: NSObject, ObservableObject {
     @Published var isConnected = false
     @Published var detections: [DetectionBox] = []
     /// Best-guess current location name resolved by the ml-vision server.
     @Published var resolvedLocationName: String = ""
+    @Published var resolvedLocation: VisionResolvedLocation?
 
     private var webSocketTask: URLSessionWebSocketTask?
     private var urlSession: URLSession?
@@ -62,6 +76,7 @@ final class VisionStreamingService: NSObject, ObservableObject {
             self.isConnected = false
             self.detections = []
             self.resolvedLocationName = ""
+            self.resolvedLocation = nil
         }
     }
 
@@ -119,12 +134,32 @@ final class VisionStreamingService: NSObject, ObservableObject {
             DetectionBox(
                 rect: CGRect(x: $0.x, y: $0.y, width: $0.width, height: $0.height),
                 label: $0.label,
-                confidence: $0.confidence
+                confidence: $0.confidence,
+                isLandmarkMatch: $0.is_landmark_match ?? false,
+                landmarkName: $0.landmark_name
+            )
+        }
+        let resolved: VisionResolvedLocation? = frame.location.flatMap { remote in
+            guard remote.kind.lowercased() != "unknown" else { return nil }
+            return VisionResolvedLocation(
+                kind: remote.kind,
+                id: remote.id,
+                name: remote.name,
+                confidence: remote.confidence,
+                spaceId: remote.space_id,
+                buildingId: remote.building_id,
+                buildingName: remote.building_name,
+                campusId: remote.campus_id,
+                floorId: remote.floor_id,
+                floorIndex: remote.floor_index
             )
         }
         DispatchQueue.main.async {
             self.detections = boxes
             self.resolvedLocationName = frame.location?.name ?? ""
+            if self.resolvedLocation?.id != resolved?.id {
+                self.resolvedLocation = resolved
+            }
         }
     }
 }
@@ -158,6 +193,8 @@ private struct RemoteDetection: Decodable {
     let y: CGFloat
     let width: CGFloat
     let height: CGFloat
+    let is_landmark_match: Bool?
+    let landmark_name: String?
 }
 
 private struct RemoteLocation: Decodable {
@@ -165,4 +202,10 @@ private struct RemoteLocation: Decodable {
     let id: String
     let name: String
     let confidence: Double
+    let space_id: String?
+    let building_id: String?
+    let building_name: String?
+    let campus_id: String?
+    let floor_id: String?
+    let floor_index: Int?
 }

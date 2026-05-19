@@ -10,12 +10,15 @@ import AVFoundation
 
 struct CameraView: View {
     @StateObject private var vm = CameraViewModel()
+    @EnvironmentObject private var container: DIContainer
+    @EnvironmentObject private var mapNav: MapNavigationCoordinator
 
     @State private var showDirections: Bool = false
     @State private var destinationQuery: String = ""
     @State private var directionText: String? = nil
     @State private var directionDistance: String? = nil
     @State private var isAskingDirections: Bool = false
+    @State private var findLocationMode: Bool = true
 
     private var isPreview: Bool {
         ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1"
@@ -34,30 +37,61 @@ struct CameraView: View {
                 GeometryReader { geo in
                     ForEach(0..<vm.boxes.count, id: \.self) { index in
                         let box = vm.boxes[index]
+                        if !findLocationMode || box.isLandmarkMatch {
+                            let x = box.rect.minX * geo.size.width
+                            let width = box.rect.width * geo.size.width
+                            let height = box.rect.height * geo.size.height
+                            let y = (1.0 - box.rect.minY - box.rect.height) * geo.size.height
 
-                        let x = box.rect.minX * geo.size.width
-                        let width = box.rect.width * geo.size.width
-                        let height = box.rect.height * geo.size.height
-                        let y = (1.0 - box.rect.minY - box.rect.height) * geo.size.height
+                            let stroke: Color = box.isLandmarkMatch ? .yellow : .green
+                            let labelText: String = {
+                                if box.isLandmarkMatch, let name = box.landmarkName {
+                                    return "\(name) (\(Int(box.confidence * 100))%)"
+                                }
+                                return "\(box.label) (\(Int(box.confidence * 100))%)"
+                            }()
 
-                        ZStack(alignment: .topLeading) {
-                            Rectangle()
-                                .stroke(Color.green, lineWidth: 3)
-                                .frame(width: width, height: height)
+                            ZStack(alignment: .topLeading) {
+                                Rectangle()
+                                    .stroke(stroke, lineWidth: box.isLandmarkMatch ? 4 : 3)
+                                    .frame(width: width, height: height)
+                                    .shadow(
+                                        color: box.isLandmarkMatch
+                                            ? Color.yellow.opacity(0.6)
+                                            : .clear,
+                                        radius: box.isLandmarkMatch ? 8 : 0
+                                    )
 
-                            Text("\(box.label) (\(Int(box.confidence * 100))%)")
-                                .font(.caption)
-                                .fontWeight(.bold)
-                                .padding(4)
-                                .background(Color.green)
-                                .foregroundColor(.black)
+                                Text(labelText)
+                                    .font(.caption)
+                                    .fontWeight(.bold)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 4)
+                                    .background(stroke)
+                                    .foregroundColor(.black)
+                                    .offset(y: -2)
+                            }
+                            .position(x: x + (width / 2), y: y + (height / 2))
                         }
-                        .position(x: x + (width / 2), y: y + (height / 2))
                     }
                 }
                 .ignoresSafeArea()
 
                 VStack {
+                    if let toast = vm.locationToast {
+                        LocalizationToast(
+                            title: toast.title,
+                            subtitle: toast.subtitle,
+                            onTap: {
+                                mapNav.selectedTab = .floorPlan
+                                vm.locationToast = nil
+                            },
+                            onDismiss: { vm.locationToast = nil }
+                        )
+                        .padding(.top, 16)
+                        .padding(.horizontal, 16)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
                     if showDirections, let text = directionText {
                         DirectionCard(distance: directionDistance, text: text) {
                             showDirections = false
@@ -67,7 +101,7 @@ struct CameraView: View {
                         .transition(.move(edge: .top).combined(with: .opacity))
                     }
                     Spacer()
-                    HStack {
+                    HStack(spacing: 8) {
                         Button {
                             isAskingDirections = true
                         } label: {
@@ -82,6 +116,35 @@ struct CameraView: View {
                             .foregroundStyle(.white)
                             .background(.black.opacity(0.6), in: Capsule())
                             .overlay(Capsule().stroke(.white.opacity(0.12)))
+                        }
+
+                        Button {
+                            findLocationMode.toggle()
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: findLocationMode
+                                      ? "location.viewfinder"
+                                      : "viewfinder")
+                                    .font(.system(size: 12, weight: .bold))
+                                Text(findLocationMode ? "Find Location · ON" : "Find Location")
+                                    .font(.system(size: 12, weight: .semibold))
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .foregroundStyle(findLocationMode ? .black : .white)
+                            .background(
+                                findLocationMode
+                                    ? AnyShapeStyle(Color.yellow)
+                                    : AnyShapeStyle(Color.black.opacity(0.6)),
+                                in: Capsule()
+                            )
+                            .overlay(
+                                Capsule().stroke(
+                                    findLocationMode
+                                        ? Color.yellow.opacity(0.6)
+                                        : Color.white.opacity(0.12)
+                                )
+                            )
                         }
                         Spacer()
                     }
@@ -106,11 +169,13 @@ struct CameraView: View {
                 Text("Type a destination. The assistant will guide you from your current location.")
             }
             .onAppear {
+                vm.configure(with: container, coordinator: mapNav)
                 if !isPreview { vm.configureAndMaybeStart() }
             }
             .onDisappear {
                 if !isPreview { vm.stop() }
             }
+            .animation(.easeOut(duration: 0.25), value: vm.locationToast?.id)
         }
 
     private func requestDirections() {
@@ -218,6 +283,52 @@ private struct PermissionOverlay: View {
         .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 16))
         .overlay(RoundedRectangle(cornerRadius: 16).stroke(.white.opacity(0.12)))
         .padding()
+    }
+}
+
+private struct LocalizationToast: View {
+    let title: String
+    let subtitle: String
+    let onTap: () -> Void
+    let onDismiss: () -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.green.opacity(0.25))
+                    .frame(width: 44, height: 44)
+                Image(systemName: "location.viewfinder")
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundStyle(.white)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(.white)
+                Text(subtitle)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.white.opacity(0.85))
+                Text("Tap to view on map")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.7))
+                    .padding(.top, 2)
+            }
+            Spacer(minLength: 0)
+            Button {
+                onDismiss()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 18))
+                    .foregroundStyle(.white.opacity(0.7))
+            }
+        }
+        .padding(12)
+        .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.green.opacity(0.4)))
+        .shadow(color: .black.opacity(0.4), radius: 20, x: 0, y: 8)
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onTap)
     }
 }
 

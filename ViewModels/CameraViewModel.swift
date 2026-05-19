@@ -10,9 +10,17 @@ import Combine
 import CoreGraphics
 import UIKit
 
+struct VisionLocationToast: Equatable, Identifiable {
+    let id = UUID()
+    let title: String
+    let subtitle: String
+}
+
+@MainActor
 final class CameraViewModel: NSObject, ObservableObject {
     @Published var authState: AVAuthorizationStatus = .notDetermined
     @Published var boxes: [DetectionBox] = []
+    @Published var locationToast: VisionLocationToast?
 
     let session = AVCaptureSession()
     private let sessionQueue = DispatchQueue(label: "camera.session.queue")
@@ -22,12 +30,66 @@ final class CameraViewModel: NSObject, ObservableObject {
     private let streamingService = VisionStreamingService()
     private var cancellables = Set<AnyCancellable>()
 
+    private weak var container: DIContainer?
+    private weak var mapNav: MapNavigationCoordinator?
+
     override init() {
         super.init()
         streamingService.$detections
             .receive(on: DispatchQueue.main)
             .assign(to: \.boxes, on: self)
             .store(in: &cancellables)
+        streamingService.$resolvedLocation
+            .receive(on: DispatchQueue.main)
+            .removeDuplicates()
+            .compactMap { $0 }
+            .sink { [weak self] location in
+                self?.handleLocationSnap(location)
+            }
+            .store(in: &cancellables)
+    }
+
+    func configure(with container: DIContainer, coordinator: MapNavigationCoordinator) {
+        self.container = container
+        self.mapNav = coordinator
+    }
+
+    private func handleLocationSnap(_ location: VisionResolvedLocation) {
+        guard let container, let mapNav else { return }
+
+        if let buildingId = location.buildingId {
+            container.currentBuildingId = buildingId
+        }
+        if let campusId = location.campusId {
+            container.currentCampusId = campusId
+        }
+
+        if let buildingId = location.buildingId {
+            mapNav.pendingBuildingId = buildingId
+            mapNav.pendingBuildingName = location.buildingName
+            if let coord = container.floorPlanService.buildings
+                .first(where: { $0.id == buildingId })?.coordinate {
+                mapNav.pendingBuildingCoordinate = coord
+            }
+        }
+        if let floorIndex = location.floorIndex {
+            mapNav.pendingFloorIndex = floorIndex
+        }
+        
+        let buildingLine = location.buildingName.map { " · \($0)" } ?? ""
+        locationToast = VisionLocationToast(
+            title: "Localised: \(location.name)",
+            subtitle: "Floor \(location.floorIndex.map(String.init) ?? "?")\(buildingLine)"
+        )
+        let snapId = locationToast?.id
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            await MainActor.run {
+                if self?.locationToast?.id == snapId {
+                    self?.locationToast = nil
+                }
+            }
+        }
     }
 
     func configureAndMaybeStart() {
@@ -64,9 +126,12 @@ final class CameraViewModel: NSObject, ObservableObject {
             guard self.configured, !self.session.isRunning else { return }
             self.session.startRunning()
         }
+        
+        let dynamicFacility = container?.currentCampusId
+            ?? AppSecrets.facilityId
         streamingService.connect(
             baseURL: AppSecrets.backendURL,
-            facilityId: AppSecrets.facilityId,
+            facilityId: dynamicFacility,
             apiKey: AppSecrets.apiSecret
         )
     }
