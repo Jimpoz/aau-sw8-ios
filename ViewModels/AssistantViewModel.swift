@@ -119,6 +119,15 @@ final class AssistantViewModel: ObservableObject {
         )
         messages.append(welcome)
     }
+
+    func clearConversation() {
+        if isRecording { stopRecording() }
+        messages.removeAll()
+        input = ""
+        error = nil
+        isLoading = false
+        addWelcomeMessage()
+    }
     
     func toggleVoiceInput() {
         if isRecording {

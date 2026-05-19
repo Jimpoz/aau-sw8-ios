@@ -42,6 +42,17 @@ struct AssistantView: View {
                                 .foregroundStyle(Color.blue600)
                         }
                     }
+                    Button {
+                        vm.clearConversation()
+                    } label: {
+                        Image(systemName: "trash")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(Color.slate500)
+                            .padding(6)
+                            .contentShape(Rectangle())
+                    }
+                    .accessibilityLabel("Clear conversation")
+                    .disabled(vm.messages.count <= 1 && !vm.isLoading)
                 }
                 Text(vm.connectionState.statusText)
                     .font(.system(size: 11, weight: .medium))
