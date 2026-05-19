@@ -528,6 +528,9 @@ private struct SpaceDisplayItem: Decodable {
         case "ROOM_MEETING", "ROOM_SEMINAR": return .meetingRoom
         case "RESTROOM", "RESTROOM_ACCESSIBLE", "RESTROOM_MALE", "RESTROOM_FEMALE": return .restroom
         case "CORRIDOR", "CORRIDOR_SEGMENT": return .hallway
+        case "ELEVATOR": return .elevator
+        case "STAIRCASE", "ESCALATOR", "OUTDOOR_STAIRS", "RAMP": return .stairs
+        case "BRIDGE", "TUNNEL", "COVERED_WALKWAY": return .connector
         case "ENTRANCE", "ENTRANCE_SECONDARY": return .entrance
         case "EXIT_EMERGENCY": return .exit
         case "CAFETERIA", "KITCHEN": return .restaurant

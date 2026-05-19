@@ -83,6 +83,9 @@ enum RoomType: String, Codable {
     case ward
     case storage
     case hallway
+    case elevator
+    case stairs
+    case connector
     case other
     case exit
     case entrance

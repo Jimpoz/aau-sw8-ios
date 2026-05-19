@@ -95,20 +95,6 @@ struct CameraView: View {
                 .ignoresSafeArea()
 
                 VStack {
-                    if let toast = vm.locationToast {
-                        LocalizationToast(
-                            title: toast.title,
-                            subtitle: toast.subtitle,
-                            onTap: {
-                                mapNav.selectedTab = .floorPlan
-                                vm.locationToast = nil
-                            },
-                            onDismiss: { vm.locationToast = nil }
-                        )
-                        .padding(.top, 16)
-                        .padding(.horizontal, 16)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                    }
                     if showDirections, let text = directionText {
                         DirectionCard(distance: directionDistance, text: text) {
                             showDirections = false
@@ -227,7 +213,6 @@ struct CameraView: View {
             .onDisappear {
                 if !isPreview { vm.stop() }
             }
-            .animation(.easeOut(duration: 0.25), value: vm.locationToast?.id)
         }
 
     private func requestDirections() {
@@ -341,52 +326,6 @@ private struct PermissionOverlay: View {
 private struct LandmarkCapture: Identifiable {
     let id = UUID()
     let image: UIImage
-}
-
-private struct LocalizationToast: View {
-    let title: String
-    let subtitle: String
-    let onTap: () -> Void
-    let onDismiss: () -> Void
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.green.opacity(0.25))
-                    .frame(width: 44, height: 44)
-                Image(systemName: "location.viewfinder")
-                    .font(.system(size: 22, weight: .bold))
-                    .foregroundStyle(.white)
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(.white)
-                Text(subtitle)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.white.opacity(0.85))
-                Text("Tap to view on map")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.7))
-                    .padding(.top, 2)
-            }
-            Spacer(minLength: 0)
-            Button {
-                onDismiss()
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 18))
-                    .foregroundStyle(.white.opacity(0.7))
-            }
-        }
-        .padding(12)
-        .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 18))
-        .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.green.opacity(0.4)))
-        .shadow(color: .black.opacity(0.4), radius: 20, x: 0, y: 8)
-        .contentShape(Rectangle())
-        .onTapGesture(perform: onTap)
-    }
 }
 
 #Preview("Camera") { CameraView() }

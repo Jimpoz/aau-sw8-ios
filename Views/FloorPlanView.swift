@@ -108,6 +108,7 @@ struct FloorPlanView: View {
     @State private var searchTask: Task<Void, Never>? = nil
     @State private var userLocation: CLLocationCoordinate2D?
     @State private var locationAccuracy: Double?
+    @State private var showSnapConfirmation = false
     @State private var showFloorOverlay  = false
     @State private var currentBuildingId: String?
     @State private var currentBuildingOrgId: String?
@@ -223,6 +224,22 @@ struct FloorPlanView: View {
 
         .safeAreaInset(edge: .top) {
             VStack(spacing: 6) {
+                if showSnapConfirmation {
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.seal.fill")
+                            .foregroundStyle(.green)
+                        Text("Landmark recognised, user location updated!")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.white)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.black.opacity(0.75), in: RoundedRectangle(cornerRadius: 12))
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.green.opacity(0.45)))
+                    .padding(.horizontal, 16)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
                 forcedLocationBanner
                 SearchBar(text: $searchText, onSearch: handleSearch)
                     .padding(.horizontal, 16)
@@ -450,7 +467,10 @@ struct FloorPlanView: View {
         // Camera-driven forced location: resolves whenever the id is
         // set AND the floor geometry loads — order doesn't matter,
         // either path triggers the same resolver.
-        .onChange(of: diContainer.forcedUserSpaceId) { _ in applyForcedLocationIfReady() }
+        .onChange(of: diContainer.forcedUserSpaceId) { newValue in
+            applyForcedLocationIfReady()
+            if newValue != nil { flashSnapConfirmation() }
+        }
         .onChange(of: floorService.rooms.map(\.id)) { _ in applyForcedLocationIfReady() }
         .onChange(of: barometer.currentFloorIndex) { newFloor in
             guard let newFloor,
@@ -980,6 +1000,13 @@ struct FloorPlanView: View {
         locationAccuracy = locationManager.horizontalAccuracyMeters
     }
 
+    private func flashSnapConfirmation() {
+        withAnimation { showSnapConfirmation = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            withAnimation { showSnapConfirmation = false }
+        }
+    }
+
     private func applyForcedLocationIfReady() {
         guard let spaceId = diContainer.forcedUserSpaceId else { return }
         guard let room = floorService.rooms.first(where: { $0.id == spaceId }) else { return }
@@ -1482,7 +1509,9 @@ final class FloorRoomsRenderer: MKOverlayRenderer {
     static func color(for type: String) -> UIColor {
         switch type {
         case "hallway":  return UIColor(red: 0.62, green: 0.82, blue: 0.95, alpha: 1)  // corridors
-        case "restroom": return UIColor(red: 1.00, green: 0.65, blue: 0.25, alpha: 1)  // bathrooms
+        case "restroom": return UIColor(red: 1.00, green: 0.45, blue: 0.70, alpha: 1)  // bathrooms — pink
+        case "elevator", "stairs", "connector":
+                         return UIColor(red: 1.00, green: 0.58, blue: 0.10, alpha: 1)  // vertical/connectors — orange
         default:         return UIColor(red: 0.90, green: 0.90, blue: 0.92, alpha: 1)  // rooms
         }
     }

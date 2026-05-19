@@ -11,17 +11,10 @@ import CoreGraphics
 import CoreImage
 import UIKit
 
-struct VisionLocationToast: Equatable, Identifiable {
-    let id = UUID()
-    let title: String
-    let subtitle: String
-}
-
 @MainActor
 final class CameraViewModel: NSObject, ObservableObject {
     @Published var authState: AVAuthorizationStatus = .notDetermined
     @Published var boxes: [DetectionBox] = []
-    @Published var locationToast: VisionLocationToast?
 
     let session = AVCaptureSession()
     private let sessionQueue = DispatchQueue(label: "camera.session.queue")
@@ -103,21 +96,6 @@ final class CameraViewModel: NSObject, ObservableObject {
         }
 
         mapNav.selectedTab = .floorPlan
-        
-        let buildingLine = location.buildingName.map { " · \($0)" } ?? ""
-        locationToast = VisionLocationToast(
-            title: "Localised: \(location.name)",
-            subtitle: "Floor \(location.floorIndex.map(String.init) ?? "?")\(buildingLine)"
-        )
-        let snapId = locationToast?.id
-        Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 4_000_000_000)
-            await MainActor.run {
-                if self?.locationToast?.id == snapId {
-                    self?.locationToast = nil
-                }
-            }
-        }
     }
 
     func configureAndMaybeStart() {
