@@ -222,6 +222,7 @@ struct FloorPlanView: View {
 
         .safeAreaInset(edge: .top) {
             VStack(spacing: 6) {
+                forcedLocationBanner
                 SearchBar(text: $searchText, onSearch: handleSearch)
                     .padding(.horizontal, 16)
 
@@ -445,6 +446,11 @@ struct FloorPlanView: View {
         }
         .onReceive(locationManager.$lastLocation) { _ in syncFromLocationManager() }
         .onReceive(locationManager.$horizontalAccuracyMeters) { _ in syncFromLocationManager() }
+        // Camera-driven forced location: resolves whenever the id is
+        // set AND the floor geometry loads — order doesn't matter,
+        // either path triggers the same resolver.
+        .onChange(of: diContainer.forcedUserSpaceId) { _ in applyForcedLocationIfReady() }
+        .onChange(of: floorService.rooms.map(\.id)) { _ in applyForcedLocationIfReady() }
         .onChange(of: barometer.currentFloorIndex) { newFloor in
             guard let newFloor,
                   let labels = vm.availableFloorLabels,
@@ -966,10 +972,25 @@ struct FloorPlanView: View {
     }
 
     private func syncFromLocationManager() {
-        if let loc = locationManager.lastLocation {
+        if diContainer.forcedUserSpaceId == nil,
+           let loc = locationManager.lastLocation {
             userLocation = loc.coordinate
         }
         locationAccuracy = locationManager.horizontalAccuracyMeters
+    }
+
+    private func applyForcedLocationIfReady() {
+        guard let spaceId = diContainer.forcedUserSpaceId else { return }
+        guard let room = floorService.rooms.first(where: { $0.id == spaceId }) else { return }
+        if let coord = room.centroidGlobal {
+            userLocation = coord
+            locationAccuracy = 0  // exact: we know the room, not "GPS-ish"
+        } else if let polygon = room.polygonGlobal, !polygon.isEmpty {
+            let lat = polygon.reduce(0.0) { $0 + $1.latitude } / Double(polygon.count)
+            let lng = polygon.reduce(0.0) { $0 + $1.longitude } / Double(polygon.count)
+            userLocation = CLLocationCoordinate2D(latitude: lat, longitude: lng)
+            locationAccuracy = 0
+        }
     }
 
     private func handleSearch(_ query: String) {
@@ -978,6 +999,46 @@ struct FloorPlanView: View {
         resolveRoute(to: q)
     }
 
+
+    @ViewBuilder
+    private var forcedLocationBanner: some View {
+        if let spaceId = diContainer.forcedUserSpaceId {
+            let room = floorService.rooms.first(where: { $0.id == spaceId })
+            HStack(spacing: 10) {
+                Image(systemName: "viewfinder.circle.fill")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(.yellow)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Pinned to: \(room?.name ?? "registered landmark")")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white)
+                    Text("Tap × to return to GPS")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.7))
+                }
+                Spacer(minLength: 8)
+                Button {
+                    diContainer.forcedUserSpaceId = nil
+                    syncFromLocationManager()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 18))
+                        .foregroundStyle(.white.opacity(0.85))
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.black.opacity(0.75),
+                        in: RoundedRectangle(cornerRadius: 12))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color.yellow.opacity(0.5))
+            )
+            .padding(.horizontal, 16)
+            .padding(.top, 4)
+            .transition(.move(edge: .top).combined(with: .opacity))
+        }
+    }
 
     private var locationTypeLabel: String {
         guard let acc = locationAccuracy, acc >= 0 else { return "Locating…" }

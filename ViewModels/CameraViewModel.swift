@@ -38,6 +38,8 @@ final class CameraViewModel: NSObject, ObservableObject {
     private let captureLock = NSLock()
     private let frameConvertContext = CIContext()
 
+    private var lastHandledSpaceId: String?
+
     override init() {
         super.init()
         streamingService.$detections
@@ -72,6 +74,11 @@ final class CameraViewModel: NSObject, ObservableObject {
     private func handleLocationSnap(_ location: VisionResolvedLocation) {
         guard let container, let mapNav else { return }
 
+
+        let snapKey = location.spaceId ?? location.id
+        if snapKey == lastHandledSpaceId { return }
+        lastHandledSpaceId = snapKey
+
         if let buildingId = location.buildingId {
             container.currentBuildingId = buildingId
         }
@@ -90,6 +97,12 @@ final class CameraViewModel: NSObject, ObservableObject {
         if let floorIndex = location.floorIndex {
             mapNav.pendingFloorIndex = floorIndex
         }
+
+        if let spaceId = location.spaceId {
+            container.forcedUserSpaceId = spaceId
+        }
+
+        mapNav.selectedTab = .floorPlan
         
         let buildingLine = location.buildingName.map { " · \($0)" } ?? ""
         locationToast = VisionLocationToast(
