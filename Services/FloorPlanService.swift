@@ -70,6 +70,7 @@ struct FloorSummary: Identifiable, Hashable {
 /// Service for fetching floor plan geometry and building data
 class FloorPlanService: ObservableObject {
     @Published var rooms: [Room] = []
+    @Published var currentFloorId: String?
     @Published var buildings: [BuildingLocator] = []
     @Published var floors: [FloorSummary] = []
     @Published var suggestions: [SpaceSuggestion] = []
@@ -327,6 +328,7 @@ class FloorPlanService: ObservableObject {
 
             DispatchQueue.main.async {
                 self.rooms = decoded
+                self.currentFloorId = floorId
                 self.isLoading = false
             }
         } catch {
@@ -334,6 +336,25 @@ class FloorPlanService: ObservableObject {
                 self.error = "Failed to load floor geometry: \(error.localizedDescription)"
                 self.isLoading = false
             }
+        }
+    }
+
+    func peekFloorRooms(floorId: String) async -> [Room] {
+        var request = URLRequest(url: baseURL.appendingPathComponent("floors/\(floorId)/display"))
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(AppSecrets.apiSecret, forHTTPHeaderField: "X-Api-Key")
+        request.attachBearer()
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse,
+                  (200...299).contains(http.statusCode) else {
+                return []
+            }
+            let items = try JSONDecoder().decode([SpaceDisplayItem].self, from: data)
+            return items.compactMap { $0.toRoom() }
+        } catch {
+            print("[peekFloorRooms] failed: \(error)")
+            return []
         }
     }
 

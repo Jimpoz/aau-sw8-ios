@@ -21,10 +21,21 @@ struct LandmarkRegistrationSheet: View {
     @State private var errorText: String?
     @State private var infoText: String?
 
+    @State private var availableFloors: [FloorSummary] = []
+    @State private var selectedFloorId: String?
+    @State private var floorRoomsCache: [String: [Room]] = [:]
+    @State private var isLoadingFloorRooms: Bool = false
+
     private let service = LandmarkService()
 
     private var rooms: [Room] {
-        container.floorPlanService.rooms
+        if let floorId = selectedFloorId {
+            if let cached = floorRoomsCache[floorId] { return cached }
+            let liveFloorId = container.floorPlanService.currentFloorId
+            if floorId == liveFloorId { return container.floorPlanService.rooms }
+            return []
+        }
+        return container.floorPlanService.rooms
     }
 
     private var canSubmit: Bool {
@@ -39,6 +50,7 @@ struct LandmarkRegistrationSheet: View {
                 VStack(alignment: .leading, spacing: 18) {
                     preview
                     nameField
+                    floorPicker
                     spacePicker
                     if let infoText {
                         Text(infoText)
@@ -62,6 +74,37 @@ struct LandmarkRegistrationSheet: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
+            }
+            .task { await loadInitialFloors() }
+        }
+    }
+
+
+    private func loadInitialFloors() async {
+        guard let buildingId = container.currentBuildingId else { return }
+        var floors = container.floorPlanService.floors
+        if floors.isEmpty {
+            floors = await container.floorPlanService.fetchFloorList(buildingId: buildingId)
+        }
+        await MainActor.run {
+            self.availableFloors = floors
+            let live = container.floorPlanService.currentFloorId
+            self.selectedFloorId = floors.first(where: { $0.id == live })?.id
+                ?? floors.first(where: { $0.floorIndex == 0 })?.id
+                ?? floors.first?.id
+        }
+    }
+
+    private func switchFloor(to floor: FloorSummary) {
+        selectedFloorId = floor.id
+        selectedSpaceId = nil
+        if floorRoomsCache[floor.id] != nil { return }
+        Task {
+            await MainActor.run { isLoadingFloorRooms = true }
+            let fetched = await container.floorPlanService.peekFloorRooms(floorId: floor.id)
+            await MainActor.run {
+                floorRoomsCache[floor.id] = fetched
+                isLoadingFloorRooms = false
             }
         }
     }
@@ -100,6 +143,64 @@ struct LandmarkRegistrationSheet: View {
         }
     }
 
+    private var floorPicker: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text("Floor")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                if isLoadingFloorRooms {
+                    ProgressView().scaleEffect(0.7)
+                }
+                Spacer()
+                Text("Override if GPS is wrong")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+            }
+            if availableFloors.isEmpty {
+                Text("Floor list not loaded — open the Map tab and zoom into a building first.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .padding(10)
+                    .background(Color.secondary.opacity(0.08),
+                                in: RoundedRectangle(cornerRadius: 8))
+            } else {
+                Menu {
+                    ForEach(availableFloors) { floor in
+                        Button {
+                            switchFloor(to: floor)
+                        } label: {
+                            HStack {
+                                Text(floor.displayName ?? "Floor \(floor.floorIndex)")
+                                if selectedFloorId == floor.id {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    HStack {
+                        Text(selectedFloorLabel ?? "Choose a floor…")
+                            .foregroundStyle(selectedFloorId == nil ? Color.secondary : .primary)
+                        Spacer()
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(Color.secondary.opacity(0.08),
+                                in: RoundedRectangle(cornerRadius: 8))
+                }
+            }
+        }
+    }
+
+    private var selectedFloorLabel: String? {
+        availableFloors.first(where: { $0.id == selectedFloorId })
+            .map { $0.displayName ?? "Floor \($0.floorIndex)" }
+    }
+
     private var spacePicker: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Attach to space")
@@ -107,7 +208,7 @@ struct LandmarkRegistrationSheet: View {
                 .foregroundStyle(.secondary)
 
             if rooms.isEmpty {
-                Text("No rooms loaded for the current floor. Open the Map tab and zoom into a building first, then try again.")
+                Text("No rooms on this floor — try a different one above.")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .padding(10)
