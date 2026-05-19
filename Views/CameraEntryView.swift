@@ -126,16 +126,6 @@ struct CameraEntryView: View {
                 ) {
                     showStub = .qrCode
                 }
-                Divider().padding(.leading, 56)
-
-                ActionRow(
-                    icon: "magnifyingglass",
-                    iconBg: Color(red: 0.95, green: 0.55, blue: 0.20),
-                    title: "Find Location",
-                    subtitle: "Use the camera to identify where you are."
-                ) {
-                    showStub = .findLocation
-                }
             }
             .background(Color.cardSurface, in: RoundedRectangle(cornerRadius: 18))
             .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.slate100))
