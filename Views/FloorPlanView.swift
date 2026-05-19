@@ -139,6 +139,7 @@ struct FloorPlanView: View {
                 rooms: floorService.rooms,
                 buildings: knownBuildings,
                 routeCoordinates: routeCoordinates,
+                forcedLocation: diContainer.forcedUserSpaceId != nil ? userLocation : nil,
                 actionProxy: mapProxy,
                 lastBuildingId: lastBuildingId,
                 lastBuildingCoordinate: lastBuildingCoordinate,
@@ -1078,7 +1079,9 @@ struct FloorPlanView: View {
     }
 }
 
-// MARK: - Map View with Overlay
+//Map View with Overlay
+
+final class ForcedLocationAnnotation: MKPointAnnotation {}
 
 struct MapViewWithOverlay: UIViewRepresentable {
     let coordinate: CLLocationCoordinate2D
@@ -1086,6 +1089,7 @@ struct MapViewWithOverlay: UIViewRepresentable {
     let rooms: [Room]
     let buildings: [BuildingLocator]
     let routeCoordinates: [CLLocationCoordinate2D]
+    let forcedLocation: CLLocationCoordinate2D?
     let actionProxy: MapActionProxy
     let lastBuildingId: String?
     let lastBuildingCoordinate: CLLocationCoordinate2D?
@@ -1219,6 +1223,13 @@ struct MapViewWithOverlay: UIViewRepresentable {
                 uiView.addAnnotation(pin)
             }
         }
+
+        if let forced = forcedLocation {
+            let dot = ForcedLocationAnnotation()
+            dot.coordinate = forced
+            dot.title = "You are here"
+            uiView.addAnnotation(dot)
+        }
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -1300,6 +1311,30 @@ struct MapViewWithOverlay: UIViewRepresentable {
                 print("[PROX] zoom=\(zoomLevel) → \(pick.name) at \(Int(nearest.1))m centre, in view")
             }
             parent.onBuildingZoom(pick.id, pick.coordinate)
+        }
+
+        func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
+            guard annotation is ForcedLocationAnnotation else { return nil }
+            let id = "forcedLocation"
+            let view = mapView.dequeueReusableAnnotationView(withIdentifier: id)
+                ?? MKAnnotationView(annotation: annotation, reuseIdentifier: id)
+            view.annotation = annotation
+            view.canShowCallout = true
+            let size: CGFloat = 18
+            view.frame = CGRect(x: 0, y: 0, width: size, height: size)
+            view.backgroundColor = .clear
+            view.layer.sublayers?.removeAll()
+            let dot = CAShapeLayer()
+            dot.path = UIBezierPath(ovalIn: CGRect(x: 0, y: 0, width: size, height: size)).cgPath
+            dot.fillColor = UIColor.systemRed.cgColor
+            dot.strokeColor = UIColor.white.cgColor
+            dot.lineWidth = 2.5
+            dot.shadowColor = UIColor.black.cgColor
+            dot.shadowOpacity = 0.35
+            dot.shadowRadius = 3
+            dot.shadowOffset = CGSize(width: 0, height: 1)
+            view.layer.addSublayer(dot)
+            return view
         }
 
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
