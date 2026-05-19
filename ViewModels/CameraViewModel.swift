@@ -170,6 +170,7 @@ final class CameraViewModel: NSObject, ObservableObject {
             self.session.stopRunning()
         }
         streamingService.disconnect()
+        lastHandledSpaceId = nil
     }
 
     func openSettings() {

@@ -8,43 +8,76 @@
 import SwiftUI
 import Combine
 import CoreImage.CIFilterBuiltins
-import CoreMotion
+import CoreLocation
+
 
 @MainActor
-final class PedometerStats: ObservableObject {
+final class MapDistanceStats: ObservableObject {
     @Published var stepsText: String = "—"
     @Published var distanceText: String = "—"
 
-    private let pedometer = CMPedometer()
+    private var cancellables = Set<AnyCancellable>()
+    private var lastSample: CLLocation?
+    private var metersToday: Double = 0
 
-    private var motionUsageDescriptionConfigured: Bool {
-        let key = "NSMotionUsageDescription"
-        let value = Bundle.main.object(forInfoDictionaryKey: key) as? String
-        return value?.isEmpty == false
+    @AppStorage("mapStats.dayKey") private var storedDayKey: String = ""
+    @AppStorage("mapStats.metersToday") private var storedMeters: Double = 0
+
+    private let minStepMeters: Double = 3.0
+    private let maxStepMeters: Double = 200.0
+    private let accuracyCeilingMeters: Double = 30.0
+    private let strideMeters: Double = 0.762  // ≈ avg adult stride
+
+    init() {
+        rolloverIfNeeded()
+        metersToday = storedMeters
+        publishFormatted()
     }
 
-    func refresh() {
-        guard motionUsageDescriptionConfigured else {
-            print("[PEDOMETER] NSMotionUsageDescription missing from Info.plist — skipping query to avoid SIGTERM")
+    func configure(with manager: LocationManager) {
+        cancellables.removeAll()
+        manager.$lastLocation
+            .compactMap { $0 }
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] loc in
+                self?.ingest(loc)
+            }
+            .store(in: &cancellables)
+    }
+
+    private func ingest(_ next: CLLocation) {
+        rolloverIfNeeded()
+
+        if next.horizontalAccuracy < 0 || next.horizontalAccuracy > accuracyCeilingMeters {
             return
         }
-        guard CMPedometer.isStepCountingAvailable() else { return }
-        let start = Calendar.current.startOfDay(for: Date())
-        pedometer.queryPedometerData(from: start, to: Date()) { [weak self] data, error in
-            if let error {
-                print("[PEDOMETER] query failed: \(error.localizedDescription)")
-                return
-            }
-            guard let self, let data else { return }
-            Task { @MainActor in
-                self.stepsText = Self.numberFormatter.string(from: data.numberOfSteps) ?? "—"
-                if let meters = data.distance?.doubleValue {
-                    self.distanceText = meters >= 1000
-                        ? String(format: "%.1f km", meters / 1000)
-                        : String(format: "%.0f m", meters)
-                }
-            }
-        }
+
+        defer { lastSample = next }
+        guard let prev = lastSample else { return }
+
+        let delta = next.distance(from: prev)
+        guard delta >= minStepMeters, delta <= maxStepMeters else { return }
+
+        metersToday += delta
+        storedMeters = metersToday
+        publishFormatted()
+    }
+
+    private func rolloverIfNeeded() {
+        let today = Self.dayKeyFormatter.string(from: Date())
+        if storedDayKey == today { return }
+        storedDayKey = today
+        storedMeters = 0
+        metersToday = 0
+        lastSample = nil
+    }
+
+    private func publishFormatted() {
+        let stepsValue = Int((metersToday / strideMeters).rounded())
+        stepsText = Self.numberFormatter.string(from: NSNumber(value: stepsValue)) ?? "\(stepsValue)"
+        distanceText = metersToday >= 1000
+            ? String(format: "%.1f km", metersToday / 1000)
+            : String(format: "%.0f m", metersToday)
     }
 
     private static let numberFormatter: NumberFormatter = {
@@ -52,16 +85,24 @@ final class PedometerStats: ObservableObject {
         f.numberStyle = .decimal
         return f
     }()
+
+    private static let dayKeyFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.timeZone = .current
+        return f
+    }()
 }
 
 struct ProfileView: View {
     @EnvironmentObject private var themeSettings: ThemeSettings
     @EnvironmentObject private var authService: AuthService
+    @EnvironmentObject private var container: DIContainer
     @AppStorage("nav.avoidStairs")    private var avoidStairs:    Bool = false
     @AppStorage("nav.elevatorsOnly")  private var elevatorsOnly:  Bool = false
     @AppStorage("nav.accessibleOnly") private var accessibleOnly: Bool = false
     @AppStorage("nav.voiceGuidance")  private var voiceGuidance:  Bool = false
-    @StateObject private var pedometer = PedometerStats()
+    @StateObject private var pedometer = MapDistanceStats()
     @State private var showRoomPhotoUpload: Bool = false
     @State private var showMfaSetup: Bool = false
     @State private var showMfaDisable: Bool = false
@@ -311,7 +352,11 @@ struct ProfileView: View {
         }
         .task {
             try? await authService.refreshPrincipal()
-            pedometer.refresh()
+            // Wire the map-derived tracker to the app's shared
+            // LocationManager. Done in .task (not init) so it
+            // captures the current container instance from the
+            // SwiftUI environment.
+            pedometer.configure(with: container.locationManager)
         }
     }
 
