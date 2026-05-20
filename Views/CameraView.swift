@@ -19,7 +19,7 @@ struct CameraView: View {
     @State private var directionText: String? = nil
     @State private var directionDistance: String? = nil
     @State private var isAskingDirections: Bool = false
-    @State private var capturedLandmarkFrame: UIImage?
+    @State private var landmarkCapture: LandmarkCapture?
     @State private var isCapturingForLandmark: Bool = false
     @State private var findLocationMode: Bool = true
 
@@ -37,7 +37,7 @@ struct CameraView: View {
         isCapturingForLandmark = true
         vm.captureNextFrame { image in
             isCapturingForLandmark = false
-            capturedLandmarkFrame = image
+            landmarkCapture = image.map { LandmarkCapture(image: $0) }
         }
     }
 
@@ -200,12 +200,9 @@ struct CameraView: View {
             } message: {
                 Text("Type a destination. The assistant will guide you from your current location.")
             }
-            .sheet(item: Binding(
-                get: { capturedLandmarkFrame.map { LandmarkCapture(image: $0) } },
-                set: { capturedLandmarkFrame = $0?.image }
-            )) { capture in
+            .sheet(item: $landmarkCapture) { capture in
                 LandmarkRegistrationSheet(capturedImage: capture.image) { _ in
-                    capturedLandmarkFrame = nil
+                    landmarkCapture = nil
                 }
                 .environmentObject(container)
             }
