@@ -54,7 +54,10 @@ struct CameraView: View {
                 GeometryReader { geo in
                     ForEach(0..<vm.boxes.count, id: \.self) { index in
                         let box = vm.boxes[index]
-                        if !findLocationMode || box.isLandmarkMatch {
+                        let shouldShow = box.isLandmarkMatch
+                            ? (findLocationMode && box.confidence > 0.85)
+                            : !findLocationMode
+                        if shouldShow {
                             let x = box.rect.minX * geo.size.width
                             let width = box.rect.width * geo.size.width
                             let height = box.rect.height * geo.size.height
