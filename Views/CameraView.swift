@@ -206,6 +206,16 @@ struct CameraView: View {
                 }
                 .environmentObject(container)
             }
+            .onChange(of: landmarkCapture?.id) { newId in
+                // Pause the live detection stream while the registration
+                // sheet is up; resume (and refresh the ORB cache) on close.
+                guard !isPreview else { return }
+                if newId == nil {
+                    vm.resumeStreaming()
+                } else {
+                    vm.pauseStreaming()
+                }
+            }
             .onAppear {
                 vm.configure(with: container, coordinator: mapNav)
                 if !isPreview { vm.configureAndMaybeStart() }

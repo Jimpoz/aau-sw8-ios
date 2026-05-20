@@ -151,6 +151,22 @@ final class CameraViewModel: NSObject, ObservableObject {
         lastHandledSpaceId = nil
     }
 
+    func pauseStreaming() {
+        streamingService.disconnect()
+        boxes = []
+    }
+
+    func resumeStreaming() {
+        lastHandledSpaceId = nil
+        let dynamicFacility = container?.currentCampusId
+            ?? AppSecrets.facilityId
+        streamingService.connect(
+            baseURL: AppSecrets.backendURL,
+            facilityId: dynamicFacility,
+            apiKey: AppSecrets.apiSecret
+        )
+    }
+
     func openSettings() {
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
         UIApplication.shared.open(url)
