@@ -8,6 +8,7 @@
 import SwiftUI
 
 struct CameraEntryView: View {
+    @EnvironmentObject private var container: DIContainer
     @State private var openCamera = false
     @State private var openRoomScan = false
     @State private var showStub: StubAction?
@@ -41,7 +42,7 @@ struct CameraEntryView: View {
                 }
             }
             .sheet(isPresented: $openRoomScan) {
-                RoomPhotoUploadView()
+                RoomPhotoUploadView(buildingId: container.currentBuildingId)
             }
             .alert(item: $showStub) { stub in
                 Alert(
@@ -200,4 +201,4 @@ private enum StubAction: Identifiable {
     }
 }
 
-#Preview("CameraEntry") { CameraEntryView() }
+#Preview("CameraEntry") { CameraEntryView().environmentObject(DIContainer()) }

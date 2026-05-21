@@ -63,8 +63,14 @@ final class RoomSummaryService {
     }
 
     /// Fetch the list of room display names available for room-summary setup.
-    func listRooms() async throws -> [String] {
-        guard let url = URL(string: "\(baseURL)/api/v1/room-summary/rooms") else {
+    func listRooms(buildingId: String? = nil) async throws -> [String] {
+        guard var comps = URLComponents(string: "\(baseURL)/api/v1/room-summary/rooms") else {
+            throw ServiceError.badURL
+        }
+        if let buildingId, !buildingId.isEmpty {
+            comps.queryItems = [URLQueryItem(name: "building_id", value: buildingId)]
+        }
+        guard let url = comps.url else {
             throw ServiceError.badURL
         }
         var request = URLRequest(url: url)

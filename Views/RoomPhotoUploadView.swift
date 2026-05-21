@@ -11,6 +11,8 @@ import PhotosUI
 struct RoomPhotoUploadView: View {
     @Environment(\.dismiss) private var dismiss
 
+    var buildingId: String? = nil
+
     private let service = RoomSummaryService()
 
     @State private var availableRooms: [String] = []
@@ -256,7 +258,7 @@ struct RoomPhotoUploadView: View {
         isLoadingRooms = true
         defer { isLoadingRooms = false }
         do {
-            let names = try await service.listRooms()
+            let names = try await service.listRooms(buildingId: buildingId)
             availableRooms = names
             if selectedRoom.isEmpty, let first = names.first { selectedRoom = first }
         } catch {

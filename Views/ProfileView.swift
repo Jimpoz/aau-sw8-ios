@@ -332,7 +332,7 @@ struct ProfileView: View {
         }
         .background(Color.slate50)
         .sheet(isPresented: $showRoomPhotoUpload) {
-            RoomPhotoUploadView()
+            RoomPhotoUploadView(buildingId: container.currentBuildingId)
         }
         .sheet(isPresented: $showMfaSetup) {
             MfaEnrollmentSheet()
