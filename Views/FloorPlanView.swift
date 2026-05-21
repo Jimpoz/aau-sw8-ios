@@ -101,6 +101,7 @@ struct FloorPlanView: View {
     @StateObject private var assistant   = AssistantService()
     @StateObject private var navigationService = NavigationService()
     @State private var routeCoordinates: [CLLocationCoordinate2D] = []
+    @State private var walkedCoordinates: [CLLocationCoordinate2D] = []
     @StateObject private var locationManager = LocationManager()
     @StateObject private var barometer       = BarometerService()
 
@@ -120,6 +121,13 @@ struct FloorPlanView: View {
     @State private var pendingRouteSuggestion: SpaceSuggestion?
     @State private var isResolvingRoute = false
     @State private var isNavigating = false
+    // Off-route detection: streak of consecutive fixes the user has been off
+    // the path, a guard against overlapping reroutes, and whether the user is
+    // actually on the floor the route is drawn for (so we don't reroute when
+    // viewing a different floor of a multi-floor route).
+    @State private var offRouteStreak = 0
+    @State private var isRerouting = false
+    @State private var userOnRouteFloor = false
     @State private var editState: BuildingEditState?
     @State private var isPreparingEdit = false
     @State private var isSavingEdit = false
@@ -140,6 +148,7 @@ struct FloorPlanView: View {
                 rooms: floorService.rooms,
                 buildings: knownBuildings,
                 routeCoordinates: routeCoordinates,
+                walkedCoordinates: walkedCoordinates,
                 forcedLocation: diContainer.forcedUserSpaceId != nil ? userLocation : nil,
                 actionProxy: mapProxy,
                 lastBuildingId: lastBuildingId,
@@ -461,6 +470,7 @@ struct FloorPlanView: View {
         .onReceive(locationManager.$lastLocation) { _ in
             rebuildRouteCoordinates(navigationService.currentRoute)
             checkArrival()
+            checkOffRoute()
         }
         .onReceive(locationManager.$lastLocation) { _ in syncFromLocationManager() }
         .onReceive(locationManager.$horizontalAccuracyMeters) { _ in syncFromLocationManager() }
@@ -550,7 +560,7 @@ struct FloorPlanView: View {
     }
 
     private func rebuildRouteCoordinates(_ route: NavigationRoute?) {
-        guard let r = route else { routeCoordinates = []; return }
+        guard let r = route else { routeCoordinates = []; walkedCoordinates = []; return }
 
         let routeFloors = Set(r.steps.compactMap { $0.floorIndex })
         let isMultiFloor = routeFloors.count > 1
@@ -576,11 +586,107 @@ struct FloorPlanView: View {
             userOnThisFloor = !isMultiFloor
         }
 
+        userOnRouteFloor = userOnThisFloor
         if let user = userLocation, userOnThisFloor {
-            routeCoordinates = [user] + pathCoords
+            let (walked, remaining) = splitRoute(pathCoords, anchor: user)
+            walkedCoordinates = walked
+            routeCoordinates = remaining
         } else {
+            walkedCoordinates = []
             routeCoordinates = pathCoords
         }
+    }
+    private func checkOffRoute() {
+        guard navigationService.currentRoute != nil,
+              !isRerouting,
+              userOnRouteFloor,
+              let user = userLocation,
+              let dest = pendingRouteSuggestion,
+              routeCoordinates.count >= 2 else { return }
+
+        let deviation = routeDeviationMeters(routeCoordinates, anchor: user)
+        if deviation > 15 {
+            offRouteStreak += 1
+            if offRouteStreak >= 2 {
+                offRouteStreak = 0
+                reroute(to: dest, from: user)
+            }
+        } else {
+            offRouteStreak = 0
+        }
+    }
+
+    private func reroute(to dest: SpaceSuggestion, from user: CLLocationCoordinate2D) {
+        isRerouting = true
+        Task {
+            await navigationService.computeRoute(
+                fromLatitude: user.latitude,
+                longitude: user.longitude,
+                to: dest.id,
+                avoidStairs: prefAvoidStairs,
+                elevatorsOnly: prefElevatorsOnly,
+                accessibleOnly: prefAccessibleOnly
+            )
+            await MainActor.run { isRerouting = false }
+        }
+    }
+
+    private func routeDeviationMeters(
+        _ route: [CLLocationCoordinate2D],
+        anchor: CLLocationCoordinate2D
+    ) -> Double {
+        guard route.count >= 2 else { return 0 }
+        var best = Double.greatestFiniteMagnitude
+        for i in 0..<(route.count - 1) {
+            let (_, d) = projectOntoSegment(anchor, route[i], route[i + 1])
+            if d < best { best = d }
+        }
+        return best
+    }
+
+    private func splitRoute(
+        _ route: [CLLocationCoordinate2D],
+        anchor: CLLocationCoordinate2D
+    ) -> (walked: [CLLocationCoordinate2D], remaining: [CLLocationCoordinate2D]) {
+        guard route.count >= 2 else { return ([], route) }
+
+        var bestSeg = 0
+        var bestProj = route[0]
+        var bestDist = Double.greatestFiniteMagnitude
+        for i in 0..<(route.count - 1) {
+            let (proj, dist) = projectOntoSegment(anchor, route[i], route[i + 1])
+            if dist < bestDist {
+                bestDist = dist
+                bestSeg = i
+                bestProj = proj
+            }
+        }
+
+        let walked = Array(route[0...bestSeg]) + [bestProj]
+        let remaining = [bestProj] + Array(route[(bestSeg + 1)...])
+        return (walked, remaining)
+    }
+
+    private func projectOntoSegment(
+        _ p: CLLocationCoordinate2D,
+        _ a: CLLocationCoordinate2D,
+        _ b: CLLocationCoordinate2D
+    ) -> (CLLocationCoordinate2D, Double) {
+        let mPerDegLat = 111_320.0
+        let mPerDegLng = 111_320.0 * cos(a.latitude * .pi / 180)
+        let ax = a.longitude * mPerDegLng, ay = a.latitude * mPerDegLat
+        let bx = b.longitude * mPerDegLng, by = b.latitude * mPerDegLat
+        let px = p.longitude * mPerDegLng, py = p.latitude * mPerDegLat
+        let dx = bx - ax, dy = by - ay
+        let len2 = dx * dx + dy * dy
+        let t = len2 == 0 ? 0 : max(0, min(1, ((px - ax) * dx + (py - ay) * dy) / len2))
+        let projLat = a.latitude + t * (b.latitude - a.latitude)
+        let projLng = a.longitude + t * (b.longitude - a.longitude)
+        let ex = px - (ax + t * dx), ey = py - (ay + t * dy)
+        return (
+            CLLocationCoordinate2D(latitude: projLat, longitude: projLng),
+            (ex * ex + ey * ey).squareRoot()
+        )
     }
 
     private func sliceStepsForFloor(
@@ -1116,6 +1222,9 @@ struct MapViewWithOverlay: UIViewRepresentable {
     let rooms: [Room]
     let buildings: [BuildingLocator]
     let routeCoordinates: [CLLocationCoordinate2D]
+    // The portion of the route already walked (behind the user), drawn dimmed
+    // so the active blue line shrinks toward the destination as the user moves.
+    let walkedCoordinates: [CLLocationCoordinate2D]
     let forcedLocation: CLLocationCoordinate2D?
     let actionProxy: MapActionProxy
     let lastBuildingId: String?
@@ -1234,6 +1343,13 @@ struct MapViewWithOverlay: UIViewRepresentable {
         let routeOverlays = uiView.overlays.filter { $0 is MKPolyline }
         uiView.removeOverlays(routeOverlays)
         uiView.removeAnnotations(uiView.annotations.filter { !($0 is MKUserLocation) })
+
+        if walkedCoordinates.count >= 2 {
+            var walked = walkedCoordinates
+            let trail = MKPolyline(coordinates: &walked, count: walked.count)
+            trail.title = "route-walked"
+            uiView.addOverlay(trail, level: .aboveLabels)
+        }
 
         if routeCoordinates.count >= 2 {
             var coords = routeCoordinates
@@ -1367,7 +1483,10 @@ struct MapViewWithOverlay: UIViewRepresentable {
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
             if let polyline = overlay as? MKPolyline {
                 let r = MKPolylineRenderer(polyline: polyline)
-                if polyline.title == "route-halo" {
+                if polyline.title == "route-walked" {
+                    r.strokeColor = UIColor.gray.withAlphaComponent(0.4)
+                    r.lineWidth = 4.0
+                } else if polyline.title == "route-halo" {
                     r.strokeColor = UIColor.white.withAlphaComponent(0.95)
                     r.lineWidth = 9.0
                 } else {
