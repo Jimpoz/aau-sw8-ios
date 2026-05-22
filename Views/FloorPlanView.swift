@@ -184,6 +184,7 @@ struct FloorPlanView: View {
                     self.currentBuildingCoordinate = nil
                     self.diContainer.currentBuildingId = nil
                     self.diContainer.currentCampusId = nil
+                    self.diContainer.currentFloorIndex = nil
                     barometer.stop()
                 },
                 onRoomTap: { room in
@@ -454,6 +455,9 @@ struct FloorPlanView: View {
             if showFloorOverlay, let buildingId = currentBuildingId {
                 loadBuildingFloorData(buildingId: buildingId)
             }
+            // Publish the displayed floor (manual pick or barometer auto-switch)
+            // so the assistant can answer "which floor am I on".
+            diContainer.currentFloorIndex = displayedFloorIndex
             rebuildRouteCoordinates(navigationService.currentRoute)
         }
         .onChange(of: mapNav.pendingBuildingId) { _ in consumePendingBuildingTarget() }

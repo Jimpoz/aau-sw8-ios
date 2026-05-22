@@ -18,6 +18,7 @@ final class DIContainer: ObservableObject {
     @Published var locationManager = LocationManager()
     @Published var currentCampusId: String?
     @Published var currentBuildingId: String?
+    @Published var currentFloorIndex: Int?
     @Published var forcedUserSpaceId: String?
 
     init(spatial: SpatialQuerying? = nil, llm: LLMChatting? = nil) {

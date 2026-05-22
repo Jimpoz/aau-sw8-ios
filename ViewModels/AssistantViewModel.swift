@@ -267,6 +267,7 @@ final class AssistantViewModel: ObservableObject {
 
         if let cid = resolvedCampusId { context["campus_id"] = cid }
         if let bid = resolvedBuildingId { context["building_id"] = bid }
+        if let floor = container?.currentFloorIndex { context["floor_index"] = floor }
 
         Task {
             do {

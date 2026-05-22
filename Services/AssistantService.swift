@@ -20,6 +20,7 @@ final class AssistantService: NSObject, ObservableObject, LLMChatting {
         let building_id: String?
         let user_lat: Double?
         let user_lon: Double?
+        let floor_index: Int?
         let current_location_space_id: String?
         let current_location_coords: CoordinateData?
 
@@ -65,6 +66,7 @@ final class AssistantService: NSObject, ObservableObject, LLMChatting {
         }
 
         let effectiveCampusId = (context["campus_id"] as? String) ?? campusId
+        let floorIndex = context["floor_index"] as? Int
 
         let request = ChatRequest(
             user_query: userText,
@@ -72,6 +74,7 @@ final class AssistantService: NSObject, ObservableObject, LLMChatting {
             building_id: buildingId,
             user_lat: y,
             user_lon: x,
+            floor_index: floorIndex,
             current_location_space_id: spaceId,
             current_location_coords: coords
         )
