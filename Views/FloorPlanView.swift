@@ -702,6 +702,7 @@ struct FloorPlanView: View {
         guard let room = floorService.rooms.first(where: { $0.id == sid }) else {
             return nil
         }
+        if let exact = diContainer.forcedUserCoordinate { return exact }
         if let c = room.centroidGlobal { return c }
         if let p = room.polygonGlobal, !p.isEmpty {
             let lat = p.reduce(0.0) { $0 + $1.latitude } / Double(p.count)
@@ -745,10 +746,11 @@ struct FloorPlanView: View {
         }
 
         userOnRouteFloor = userOnThisFloor
-        if let user = userLocation, userOnThisFloor {
-            let (walked, remaining) = splitRoute(pathCoords, anchor: user)
+        let anchor: CLLocationCoordinate2D? = liveDotLocation ?? userLocation
+        if let anchor, userOnThisFloor {
+            let (walked, remaining) = splitRoute(pathCoords, anchor: anchor)
             walkedCoordinates = walked
-            routeCoordinates = remaining
+            routeCoordinates = [anchor] + remaining
         } else {
             walkedCoordinates = []
             routeCoordinates = pathCoords
@@ -1281,6 +1283,9 @@ struct FloorPlanView: View {
             userLocation = loc.coordinate
         }
         locationAccuracy = locationManager.horizontalAccuracyMeters
+        if let loc = locationManager.lastLocation {
+            diContainer.lastKnownUserCoordinate = loc.coordinate
+        }
     }
 
     private func flashSnapConfirmation() {
@@ -1330,6 +1335,7 @@ struct FloorPlanView: View {
                 Spacer(minLength: 8)
                 Button {
                     diContainer.forcedUserSpaceId = nil
+                    diContainer.forcedUserCoordinate = nil
                     syncFromLocationManager()
                 } label: {
                     Image(systemName: "xmark.circle.fill")

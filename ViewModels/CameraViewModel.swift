@@ -9,6 +9,7 @@ import AVFoundation
 import Combine
 import CoreGraphics
 import CoreImage
+import CoreLocation
 import UIKit
 
 @MainActor
@@ -93,6 +94,13 @@ final class CameraViewModel: NSObject, ObservableObject {
 
         if let spaceId = location.spaceId {
             container.forcedUserSpaceId = spaceId
+        }
+        if let lat = location.centroidLat, let lng = location.centroidLng {
+            container.forcedUserCoordinate = CLLocationCoordinate2D(
+                latitude: lat, longitude: lng,
+            )
+        } else {
+            container.forcedUserCoordinate = nil
         }
 
         mapNav.selectedTab = .floorPlan

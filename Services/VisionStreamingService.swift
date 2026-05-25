@@ -20,6 +20,8 @@ struct VisionResolvedLocation: Equatable {
     let campusId: String?
     let floorId: String?
     let floorIndex: Int?
+    let centroidLat: Double?
+    let centroidLng: Double?
 }
 
 final class VisionStreamingService: NSObject, ObservableObject {
@@ -151,7 +153,9 @@ final class VisionStreamingService: NSObject, ObservableObject {
                 buildingName: remote.building_name,
                 campusId: remote.campus_id,
                 floorId: remote.floor_id,
-                floorIndex: remote.floor_index
+                floorIndex: remote.floor_index,
+                centroidLat: remote.centroid_lat,
+                centroidLng: remote.centroid_lng
             )
         }
         DispatchQueue.main.async {
@@ -208,4 +212,6 @@ private struct RemoteLocation: Decodable {
     let campus_id: String?
     let floor_id: String?
     let floor_index: Int?
+    let centroid_lat: Double?
+    let centroid_lng: Double?
 }

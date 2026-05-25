@@ -278,10 +278,13 @@ struct LandmarkRegistrationSheet: View {
         defer { isSubmitting = false }
         do {
             let trimmed = name.trimmingCharacters(in: .whitespaces)
+            let coord = container.forcedUserCoordinate
+                ?? container.lastKnownUserCoordinate
             let result = try await service.register(
                 image: capturedImage,
                 name: trimmed,
-                spaceId: spaceId
+                spaceId: spaceId,
+                coordinate: coord
             )
             infoText = "Registered — ml-vision will pick this up on the next stream connection."
             onRegistered?(result)

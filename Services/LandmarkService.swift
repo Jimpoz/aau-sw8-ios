@@ -5,6 +5,7 @@
 //  Created by jimpo on 19/05/26.
 //
 
+import CoreLocation
 import Foundation
 import UIKit
 
@@ -16,6 +17,10 @@ struct RegisteredLandmark: Identifiable, Decodable, Equatable {
     let campus_id: String?
     let image_width: Int?
     let image_height: Int?
+    let centroid_x: Double?
+    let centroid_y: Double?
+    let centroid_lat: Double?
+    let centroid_lng: Double?
     let created_by: String?
     let created_at: String?
 }
@@ -49,13 +54,12 @@ final class LandmarkService {
         self.session = URLSession(configuration: .default)
     }
 
-    /// POST /landmarks (multipart). Owner-or-editor only.
-    /// Returns the persisted record so the UI can show "registered"
-    /// without a second round trip.
+
     func register(
         image: UIImage,
         name: String,
-        spaceId: String
+        spaceId: String,
+        coordinate: CLLocationCoordinate2D? = nil
     ) async throws -> RegisteredLandmark {
         guard let jpeg = image.jpegData(compressionQuality: 0.85) else {
             throw LandmarkServiceError.badImage
@@ -80,6 +84,15 @@ final class LandmarkService {
         append("--\(boundary)\r\n")
         append("Content-Disposition: form-data; name=\"space_id\"\r\n\r\n")
         append("\(spaceId)\r\n")
+
+        if let coordinate {
+            append("--\(boundary)\r\n")
+            append("Content-Disposition: form-data; name=\"centroid_lat\"\r\n\r\n")
+            append("\(coordinate.latitude)\r\n")
+            append("--\(boundary)\r\n")
+            append("Content-Disposition: form-data; name=\"centroid_lng\"\r\n\r\n")
+            append("\(coordinate.longitude)\r\n")
+        }
 
         append("--\(boundary)\r\n")
         append("Content-Disposition: form-data; name=\"image\"; filename=\"landmark.jpg\"\r\n")
