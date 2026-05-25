@@ -160,20 +160,16 @@ struct FloorPlanView: View {
                 editState: $editState,
                 onBuildingZoom: { buildingId, buildingCoord in
                     let changedBuilding = (buildingId != self.currentBuildingId)
-                    self.currentBuildingId = buildingId
                     self.currentBuildingCoordinate = buildingCoord
-                    self.showFloorOverlay  = true
-                    // Publish the active campus/building so other tabs
-                    // (the Assistant chat) scope their calls correctly
-                    // instead of falling back to AssistantService's
-                    // hardcoded init default.
-                    self.diContainer.currentBuildingId = buildingId
-                    self.diContainer.currentCampusId =
-                        floorService.buildings.first { $0.id == buildingId }?.campusId
                     if changedBuilding {
+                        self.currentBuildingId = buildingId
+                        self.showFloorOverlay = true
+                        self.diContainer.currentBuildingId = buildingId
+                        self.diContainer.currentCampusId =
+                            floorService.buildings.first { $0.id == buildingId }?.campusId
                         loadFloorsAndOverlay(buildingId: buildingId)
                         refreshCurrentBuildingOrgId()
-                    } else {
+                    } else if mapNav.pendingDestinationSpaceId != nil {
                         loadBuildingFloorData(buildingId: buildingId)
                     }
                 },
