@@ -9,6 +9,7 @@ import SwiftUI
 
 struct CameraEntryView: View {
     @EnvironmentObject private var container: DIContainer
+    @EnvironmentObject private var mapNav: MapNavigationCoordinator
     @State private var openCamera = false
     @State private var openRoomScan = false
     @State private var showStub: StubAction?
@@ -50,6 +51,14 @@ struct CameraEntryView: View {
                     message: Text(stub.message),
                     dismissButton: .default(Text("OK"))
                 )
+            }
+            // When a landmark snap (or any external nav) flips the active tab
+            // away from .camera, drop the fullScreenCover so the user actually
+            // sees the floor plan they were just redirected to. Without this,
+            // the camera cover stays mounted on top of an offscreen tab and
+            // the redirect appears to have done nothing.
+            .onChange(of: mapNav.selectedTab) { newTab in
+                if newTab != .camera { openCamera = false }
             }
         }
     }

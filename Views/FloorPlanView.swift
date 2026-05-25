@@ -121,13 +121,16 @@ struct FloorPlanView: View {
     @State private var pendingRouteSuggestion: SpaceSuggestion?
     @State private var isResolvingRoute = false
     @State private var isNavigating = false
-    // Off-route detection: streak of consecutive fixes the user has been off
-    // the path, a guard against overlapping reroutes, and whether the user is
-    // actually on the floor the route is drawn for (so we don't reroute when
-    // viewing a different floor of a multi-floor route).
     @State private var offRouteStreak = 0
     @State private var isRerouting = false
     @State private var userOnRouteFloor = false
+    @State private var simulatedPosition: CLLocationCoordinate2D?
+    @State private var simulatedArcLengthMeters: Double = 0
+    @State private var lastSimulationTick: Date?
+    @State private var simulationTimer: Timer?
+    private let averageWalkingSpeedMS: Double = 1.4
+    private let degradedAccuracyMeters: Double = 30
+    private let degradedFixAgeSeconds: Double = 8
     @State private var editState: BuildingEditState?
     @State private var isPreparingEdit = false
     @State private var isSavingEdit = false
@@ -149,7 +152,8 @@ struct FloorPlanView: View {
                 buildings: knownBuildings,
                 routeCoordinates: routeCoordinates,
                 walkedCoordinates: walkedCoordinates,
-                forcedLocation: diContainer.forcedUserSpaceId != nil ? userLocation : nil,
+                forcedLocation: liveDotLocation,
+                showsUserLocation: liveDotLocation == nil,
                 actionProxy: mapProxy,
                 lastBuildingId: lastBuildingId,
                 lastBuildingCoordinate: lastBuildingCoordinate,
@@ -406,10 +410,14 @@ struct FloorPlanView: View {
                         BottomRouteCard(
                             destination: dest,
                             navigation: progress,
+                            hasRoute: navigationService.currentRoute != nil,
+                            isNavigating: isNavigating,
                             onDismiss: cancelRoute,
                             onNavigate: {
                                 resolveRoute(to: dest.title, suggestion: pendingRouteSuggestion)
-                            }
+                            },
+                            onStart: startNavigation,
+                            onStop: stopNavigation
                         )
                         .padding(.horizontal, 16)
                     }
@@ -470,6 +478,7 @@ struct FloorPlanView: View {
         }
         .onChange(of: navigationService.currentRoute) { route in
             rebuildRouteCoordinates(route)
+            if isNavigating { initSimulationProgress() }
         }
         .onReceive(locationManager.$lastLocation) { _ in
             rebuildRouteCoordinates(navigationService.currentRoute)
@@ -534,6 +543,136 @@ struct FloorPlanView: View {
         }
         isNavigating = false
         isResolvingRoute = false
+        teardownSimulation()
+    }
+
+    private func startNavigation() {
+        guard navigationService.currentRoute != nil else { return }
+        isNavigating = true
+        mapProxy.startFollowingUser()
+        initSimulationProgress()
+        startSimulationTimer()
+    }
+
+    private func stopNavigation() {
+        isNavigating = false
+        mapProxy.stopFollowingUser()
+        teardownSimulation()
+    }
+
+    private func startSimulationTimer() {
+        simulationTimer?.invalidate()
+        lastSimulationTick = Date()
+        let t = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
+            DispatchQueue.main.async { self.tickSimulation() }
+        }
+        simulationTimer = t
+    }
+
+    private func teardownSimulation() {
+        simulationTimer?.invalidate()
+        simulationTimer = nil
+        simulatedPosition = nil
+        simulatedArcLengthMeters = 0
+        lastSimulationTick = nil
+    }
+
+    private func tickSimulation() {
+        guard isNavigating else { teardownSimulation(); return }
+        guard userOnRouteFloor, routeCoordinates.count >= 2 else {
+            simulatedPosition = nil
+            return
+        }
+        let now = Date()
+        let dt = lastSimulationTick.map { now.timeIntervalSince($0) } ?? 0.5
+        lastSimulationTick = now
+
+        let fix = locationManager.lastLocation
+        let fresh = fix.map { now.timeIntervalSince($0.timestamp) <= degradedFixAgeSeconds } ?? false
+        let accurate = (locationManager.horizontalAccuracyMeters ?? .greatestFiniteMagnitude)
+            <= degradedAccuracyMeters
+
+        if fresh, accurate, let user = userLocation {
+            let (_, arc) = projectAndArcLength(user, route: routeCoordinates)
+            simulatedArcLengthMeters = arc
+            simulatedPosition = nil
+            return
+        }
+
+        simulatedArcLengthMeters += dt * averageWalkingSpeedMS
+        simulatedPosition = coordinate(
+            atArcLength: simulatedArcLengthMeters,
+            on: routeCoordinates
+        )
+    }
+
+    private func initSimulationProgress() {
+        guard routeCoordinates.count >= 2 else {
+            simulatedArcLengthMeters = 0
+            simulatedPosition = nil
+            return
+        }
+        if let user = userLocation {
+            let (_, arc) = projectAndArcLength(user, route: routeCoordinates)
+            simulatedArcLengthMeters = arc
+        } else {
+            simulatedArcLengthMeters = 0
+        }
+        simulatedPosition = nil
+    }
+
+    private func projectAndArcLength(
+        _ p: CLLocationCoordinate2D,
+        route: [CLLocationCoordinate2D]
+    ) -> (CLLocationCoordinate2D, Double) {
+        if route.count < 2 { return (p, 0) }
+        var bestArc = 0.0
+        var bestProj = route[0]
+        var bestDist = Double.greatestFiniteMagnitude
+        var acc = 0.0
+        for i in 0..<(route.count - 1) {
+            let segLen = haversineMeters(route[i], route[i + 1])
+            let (proj, dist) = projectOntoSegment(p, route[i], route[i + 1])
+            if dist < bestDist {
+                bestDist = dist
+                bestProj = proj
+                bestArc = acc + haversineMeters(route[i], proj)
+            }
+            acc += segLen
+        }
+        return (bestProj, bestArc)
+    }
+
+    private func coordinate(
+        atArcLength target: Double,
+        on route: [CLLocationCoordinate2D]
+    ) -> CLLocationCoordinate2D? {
+        if route.isEmpty { return nil }
+        if target <= 0 { return route.first }
+        var acc = 0.0
+        for i in 0..<(route.count - 1) {
+            let segLen = haversineMeters(route[i], route[i + 1])
+            if acc + segLen >= target {
+                let t = (target - acc) / max(segLen, 0.0001)
+                let lat = route[i].latitude + t * (route[i + 1].latitude - route[i].latitude)
+                let lng = route[i].longitude + t * (route[i + 1].longitude - route[i].longitude)
+                return CLLocationCoordinate2D(latitude: lat, longitude: lng)
+            }
+            acc += segLen
+        }
+        return route.last
+    }
+
+    private func haversineMeters(
+        _ a: CLLocationCoordinate2D,
+        _ b: CLLocationCoordinate2D
+    ) -> Double {
+        let la1 = a.latitude * .pi / 180, la2 = b.latitude * .pi / 180
+        let dlat = (b.latitude - a.latitude) * .pi / 180
+        let dlng = (b.longitude - a.longitude) * .pi / 180
+        let h = sin(dlat / 2) * sin(dlat / 2)
+              + cos(la1) * cos(la2) * sin(dlng / 2) * sin(dlng / 2)
+        return 2 * 6_371_000 * atan2(sqrt(h), sqrt(1 - h))
     }
 
     private func checkArrival() {
@@ -555,6 +694,25 @@ struct FloorPlanView: View {
         if userLoc.distance(from: endLoc) <= arrivalRadius {
             cancelRoute()
         }
+    }
+
+    private var liveDotLocation: CLLocationCoordinate2D? {
+        if let sim = simulatedPosition, userOnRouteFloor { return sim }
+        return forcedLocationOnCurrentFloor
+    }
+
+    private var forcedLocationOnCurrentFloor: CLLocationCoordinate2D? {
+        guard let sid = diContainer.forcedUserSpaceId else { return nil }
+        guard let room = floorService.rooms.first(where: { $0.id == sid }) else {
+            return nil
+        }
+        if let c = room.centroidGlobal { return c }
+        if let p = room.polygonGlobal, !p.isEmpty {
+            let lat = p.reduce(0.0) { $0 + $1.latitude } / Double(p.count)
+            let lng = p.reduce(0.0) { $0 + $1.longitude } / Double(p.count)
+            return CLLocationCoordinate2D(latitude: lat, longitude: lng)
+        }
+        return nil
     }
 
     private var displayedFloorIndex: Int? {
@@ -921,6 +1079,7 @@ struct FloorPlanView: View {
 
         let knownNow = knownBuildings
         let userLoc0 = userLocation
+        let forcedSpaceId = diContainer.forcedUserSpaceId
 
         Task {
 
@@ -933,7 +1092,7 @@ struct FloorPlanView: View {
                 top = floorService.suggestions.first
             }
 
-            if let top, let loc = userLoc0 {
+            if forcedSpaceId == nil, let top, let loc = userLoc0 {
                 let building = top.buildingId.flatMap { id in
                     knownNow.first(where: { $0.id == id })
                 }
@@ -957,6 +1116,24 @@ struct FloorPlanView: View {
                         }
                         return
                     }
+                }
+            }
+
+            if let top, let fromId = forcedSpaceId {
+                await navigationService.computeRoute(
+                    from: fromId,
+                    to: top.id,
+                    avoidStairs: prefAvoidStairs,
+                    elevatorsOnly: prefElevatorsOnly,
+                    accessibleOnly: prefAccessibleOnly
+                )
+                if let route = navigationService.currentRoute {
+                    let steps = route.steps.map { $0.instruction }
+                    await MainActor.run {
+                        routeDestination = RouteDestination(title: destination, subtitle: "Route ready", steps: steps)
+                        isResolvingRoute = false
+                    }
+                    return
                 }
             }
 
@@ -1230,6 +1407,7 @@ struct MapViewWithOverlay: UIViewRepresentable {
     // so the active blue line shrinks toward the destination as the user moves.
     let walkedCoordinates: [CLLocationCoordinate2D]
     let forcedLocation: CLLocationCoordinate2D?
+    let showsUserLocation: Bool
     let actionProxy: MapActionProxy
     let lastBuildingId: String?
     let lastBuildingCoordinate: CLLocationCoordinate2D?
@@ -1261,7 +1439,7 @@ struct MapViewWithOverlay: UIViewRepresentable {
 
     func makeUIView(context: Context) -> MKMapView {
         let mapView = MKMapView()
-        mapView.showsUserLocation   = true
+        mapView.showsUserLocation   = showsUserLocation
         mapView.userTrackingMode    = .follow
         mapView.isRotateEnabled     = true
         mapView.mapType             = .standard
@@ -1312,6 +1490,11 @@ struct MapViewWithOverlay: UIViewRepresentable {
     func updateUIView(_ uiView: MKMapView, context: Context) {
         context.coordinator.parent = self
         if actionProxy.mapView == nil { actionProxy.mapView = uiView }
+        // Toggle MapKit's own blue dot in sync with the custom dot. Without
+        // this both would race during a landmark snap / simulation switch.
+        if uiView.showsUserLocation != showsUserLocation {
+            uiView.showsUserLocation = showsUserLocation
+        }
         if !context.coordinator.initialRegionSet {
             let region = MKCoordinateRegion(
                 center: coordinate,
@@ -1897,10 +2080,12 @@ private struct BuildingEditPanel: View {
 private struct BottomRouteCard: View {
     let destination: RouteDestination
     let navigation: NavigationProgress?
+    let hasRoute: Bool
+    let isNavigating: Bool
     var onDismiss: () -> Void
     var onNavigate: () -> Void
-
-    private var isNavigating: Bool { navigation != nil }
+    var onStart: () -> Void
+    var onStop: () -> Void
 
     var body: some View {
         VStack(spacing: 12) {
@@ -1923,7 +2108,7 @@ private struct BottomRouteCard: View {
                 }
             }
 
-            if let nav = navigation {
+            if isNavigating, let nav = navigation {
                 HStack(alignment: .center, spacing: 12) {
                     Image(systemName: "arrow.turn.up.right")
                         .font(.system(size: 22, weight: .heavy))
@@ -1947,6 +2132,14 @@ private struct BottomRouteCard: View {
                     }
 
                     Spacer(minLength: 8)
+
+                    Button(action: onStop) {
+                        Image(systemName: "stop.fill")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundColor(.white)
+                            .padding(12)
+                            .background(Color.red, in: Circle())
+                    }
                 }
             } else {
                 HStack {
@@ -1955,20 +2148,21 @@ private struct BottomRouteCard: View {
                             .font(.system(size: 18, weight: .bold))
                             .foregroundColor(.black)
                         HStack(spacing: 6) {
-                            Circle().fill(Color.green).frame(width: 8, height: 8)
-                            Text(destination.subtitle)
+                            Circle().fill(hasRoute ? Color.blue : Color.green).frame(width: 8, height: 8)
+                            Text(hasRoute ? "Route ready – tap Start to begin" : destination.subtitle)
                                 .font(.system(size: 13, weight: .medium))
                                 .foregroundColor(.gray)
                         }
                     }
                     Spacer()
-                    Button(action: onNavigate) {
-                        Image(systemName: "location.north.fill")
+                    Button(action: hasRoute ? onStart : onNavigate) {
+                        Image(systemName: hasRoute ? "play.fill" : "location.north.fill")
                             .font(.system(size: 18, weight: .bold))
                             .foregroundColor(.white)
                             .padding(12)
-                            .background(Color.blue, in: Circle())
-                            .shadow(color: Color.blue.opacity(0.35), radius: 10, x: 0, y: 6)
+                            .background(hasRoute ? Color.green : Color.blue, in: Circle())
+                            .shadow(color: (hasRoute ? Color.green : Color.blue).opacity(0.35),
+                                    radius: 10, x: 0, y: 6)
                     }
                 }
 
