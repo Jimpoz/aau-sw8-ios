@@ -587,19 +587,23 @@ struct FloorPlanView: View {
         let fresh = fix.map { now.timeIntervalSince($0.timestamp) <= degradedFixAgeSeconds } ?? false
         let accurate = (locationManager.horizontalAccuracyMeters ?? .greatestFiniteMagnitude)
             <= degradedAccuracyMeters
+        let blueDotReliable = fresh && accurate && diContainer.forcedUserSpaceId == nil
 
-        if fresh, accurate, let user = userLocation {
-            let (_, arc) = projectAndArcLength(user, route: routeCoordinates)
-            simulatedArcLengthMeters = arc
+        if blueDotReliable {
             simulatedPosition = nil
+            simulatedArcLengthMeters = 0
             return
         }
 
         simulatedArcLengthMeters += dt * averageWalkingSpeedMS
-        simulatedPosition = coordinate(
+        guard let newSim = coordinate(
             atArcLength: simulatedArcLengthMeters,
             on: routeCoordinates
-        )
+        ) else { return }
+
+        simulatedPosition = newSim
+        simulatedArcLengthMeters = 0
+        rebuildRouteCoordinates(navigationService.currentRoute)
     }
 
     private func initSimulationProgress() {
@@ -738,8 +742,14 @@ struct FloorPlanView: View {
             pathCoords = r.steps.compactMap { $0.coordinate }
         }
 
+        let forcedSpaceOnDisplayedFloor: Bool = {
+            guard let sid = diContainer.forcedUserSpaceId else { return false }
+            return floorService.rooms.contains { $0.id == sid }
+        }()
         let userOnThisFloor: Bool
-        if let target, let physical = barometer.currentFloorIndex {
+        if forcedSpaceOnDisplayedFloor {
+            userOnThisFloor = true
+        } else if let target, let physical = barometer.currentFloorIndex {
             userOnThisFloor = (physical == target)
         } else {
             userOnThisFloor = !isMultiFloor
