@@ -10,5 +10,7 @@
 	<string>Microphone access is needed so you can ask the virtual assistant questions using your voice.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Speech recognition converts your voice into text so you can speak your questions to the assistant.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>Motion sensors detect when you are walking so the app can advance your position along the indoor navigation route.</string>
 </dict>
 </plist>

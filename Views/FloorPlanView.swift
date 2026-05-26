@@ -17,13 +17,11 @@ final class NavigationMotionDetector: ObservableObject {
     private var lastMotionAt: Date?
     private var running = false
 
-    private let accelerationThreshold: Double = 0.05
-    private let motionTimeoutSeconds: Double = 1.2
+    private let accelerationThreshold: Double = 0.025
+    private let motionTimeoutSeconds: Double = 1.5
 
     var isAvailable: Bool {
-        guard motion.isDeviceMotionAvailable else { return false }
-        let raw = Bundle.main.object(forInfoDictionaryKey: "NSMotionUsageDescription") as? String
-        return raw?.isEmpty == false
+        return motion.isDeviceMotionAvailable
     }
 
     var isMoving: Bool {
@@ -175,11 +173,16 @@ struct FloorPlanView: View {
     @State private var simulatedArcLengthMeters: Double = 0
     @State private var lastSimulationTick: Date?
     @State private var simulationTimer: Timer?
+    /// Tracks the forced-space ID that has already been used as a dead-reckoning
+    /// anchor so that phase 1 of tickSimulation anchors only once per new snap.
+    @State private var lastAnchoredForcedSpaceId: String?
     @State private var arrivalBanner: String?
     @StateObject private var motionDetector = NavigationMotionDetector()
     private let averageWalkingSpeedMS: Double = 1.4
     private let arrivalRadiusMeters: Double = 5
-    private let degradedAccuracyMeters: Double = 30
+    // Only trust GPS when it's better than 8 m — indoor GPS is usually
+    // 20–50 m so this keeps the dead-reckoning dot active while inside.
+    private let degradedAccuracyMeters: Double = 8
     private let degradedFixAgeSeconds: Double = 8
     @State private var editState: BuildingEditState?
     @State private var isPreparingEdit = false
@@ -549,15 +552,25 @@ struct FloorPlanView: View {
         }
         .onReceive(locationManager.$lastLocation) { _ in syncFromLocationManager() }
         .onReceive(locationManager.$horizontalAccuracyMeters) { _ in syncFromLocationManager() }
-        // Camera-driven forced location: resolves whenever the id is
-        // set AND the floor geometry loads — order doesn't matter,
-        // either path triggers the same resolver.
         .onChange(of: diContainer.forcedUserSpaceId) { newValue in
+            lastAnchoredForcedSpaceId = nil
+            if newValue != nil, let targetFloor = mapNav.pendingFloorIndex {
+                let floors = floorService.floors
+                if !floors.isEmpty,
+                   let idx = floors.firstIndex(where: { $0.floorIndex == targetFloor }) {
+                    if vm.selectedFloor != idx {
+                        vm.selectedFloor = idx
+                    }
+                    barometer.recalibrate(toFloorIndex: targetFloor)
+                }
+            }
+
             applyForcedLocationIfReady()
             if newValue != nil { flashSnapConfirmation() }
         }
         .onChange(of: floorService.rooms.map(\.id)) { _ in applyForcedLocationIfReady() }
         .onChange(of: barometer.currentFloorIndex) { newFloor in
+            guard diContainer.forcedUserSpaceId == nil else { return }
             guard let newFloor,
                   let labels = vm.availableFloorLabels,
                   let summaries = floorService.floors as [FloorSummary]?,
@@ -606,7 +619,6 @@ struct FloorPlanView: View {
         }
         isNavigating = false
         isResolvingRoute = false
-        motionDetector.stop()
         teardownSimulation()
     }
 
@@ -615,7 +627,8 @@ struct FloorPlanView: View {
         isNavigating = true
         arrivalBanner = nil
         mapProxy.startFollowingUser()
-        motionDetector.start()
+        // Dead-reckoning advances at constant average walking speed — no
+        // hardware motion sensor needed. motionDetector is not started.
         initSimulationProgress()
         startSimulationTimer()
     }
@@ -623,7 +636,6 @@ struct FloorPlanView: View {
     private func stopNavigation() {
         isNavigating = false
         mapProxy.stopFollowingUser()
-        motionDetector.stop()
         teardownSimulation()
     }
 
@@ -642,11 +654,15 @@ struct FloorPlanView: View {
         simulatedPosition = nil
         simulatedArcLengthMeters = 0
         lastSimulationTick = nil
+        lastAnchoredForcedSpaceId = nil
     }
 
     private func tickSimulation() {
         guard isNavigating else { teardownSimulation(); return }
-        guard userOnRouteFloor, routeCoordinates.count >= 2 else {
+        // Do NOT gate on userOnRouteFloor here — simulation advances regardless
+        // of which floor is displayed. The liveDotLocation computed property gates
+        // whether the dot is actually rendered on the current floor overlay.
+        guard routeCoordinates.count >= 2 else {
             simulatedPosition = nil
             return
         }
@@ -654,20 +670,27 @@ struct FloorPlanView: View {
         let dt = lastSimulationTick.map { now.timeIntervalSince($0) } ?? 0.5
         lastSimulationTick = now
 
+        let forcedId = diContainer.forcedUserSpaceId
+        if let forcedId, forcedId != lastAnchoredForcedSpaceId,
+           let snapped = forcedLocationOnCurrentFloor {
+            simulatedPosition = snapped
+            rebuildRouteCoordinates(navigationService.currentRoute)
+            simulatedArcLengthMeters = 0   // dead-reckoning will advance from snapped
+            lastAnchoredForcedSpaceId = forcedId
+            return   // anchor tick — next tick advances via phase 3
+        }
+
         let fix = locationManager.lastLocation
         let fresh = fix.map { now.timeIntervalSince($0.timestamp) <= degradedFixAgeSeconds } ?? false
         let accurate = (locationManager.horizontalAccuracyMeters ?? .greatestFiniteMagnitude)
             <= degradedAccuracyMeters
-        let blueDotReliable = fresh && accurate && diContainer.forcedUserSpaceId == nil
+        let blueDotReliable = fresh && accurate
 
         if blueDotReliable {
             simulatedPosition = nil
             simulatedArcLengthMeters = 0
             return
         }
-
-        // Advance only while the phone reports motion
-        guard motionDetector.isMoving else { return }
 
         simulatedArcLengthMeters += dt * averageWalkingSpeedMS
         guard let newSim = coordinate(
@@ -679,7 +702,10 @@ struct FloorPlanView: View {
         simulatedArcLengthMeters = 0
         rebuildRouteCoordinates(navigationService.currentRoute)
 
-        if let dest = routeCoordinates.last,
+        if let route = navigationService.currentRoute,
+           let finalStep = route.steps.last,
+           let dest = finalStep.coordinate,
+           finalStep.floorIndex == displayedFloorIndex,
            haversineMeters(newSim, dest) <= arrivalRadiusMeters {
             announceArrival()
         }
@@ -950,36 +976,11 @@ struct FloorPlanView: View {
         _ steps: [NavigationStep],
         displayedFloor: Int
     ) -> [CLLocationCoordinate2D] {
-        var result: [CLLocationCoordinate2D] = []
-        var prevFloor: Int? = nil
-
-        for (idx, step) in steps.enumerated() {
-            let f = step.floorIndex
-            let onThisFloor = (f == displayedFloor) || (f == nil && prevFloor == displayedFloor)
-            if onThisFloor, let coord = step.coordinate {
-                result.append(coord)
-                prevFloor = f ?? prevFloor
-                continue
-            }
-            prevFloor = f ?? prevFloor
-
-            if step.isVerticalTransport,
-               idx + 1 < steps.count,
-               steps[idx + 1].floorIndex == displayedFloor,
-               let coord = step.coordinate {
-                result.append(coord)
-                continue
-            }
-
-            if step.isVerticalTransport,
-               idx > 0,
-               steps[idx - 1].floorIndex == displayedFloor,
-               let coord = step.coordinate {
-                result.append(coord)
-                break
-            }
+        return steps.compactMap { step in
+            guard step.floorIndex == displayedFloor,
+                  let coord = step.coordinate else { return nil }
+            return coord
         }
-        return result
     }
 
     private var knownBuildings: [BuildingLocator] {
