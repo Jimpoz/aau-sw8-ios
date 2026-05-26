@@ -877,9 +877,16 @@ struct FloorPlanView: View {
             userOnThisFloor = !isMultiFloor
         }
 
+        let routeStartFloor = r.steps.first(where: { $0.floorIndex != nil })?.floorIndex
+        let displayedIsRouteStart: Bool = {
+            guard isMultiFloor else { return true }
+            guard let target, let start = routeStartFloor else { return false }
+            return target == start
+        }()
+
         userOnRouteFloor = userOnThisFloor
         let anchor: CLLocationCoordinate2D? = liveDotLocation ?? userLocation
-        if let anchor, userOnThisFloor {
+        if let anchor, userOnThisFloor, displayedIsRouteStart {
             let (walked, remaining) = splitRoute(pathCoords, anchor: anchor)
             walkedCoordinates = walked
             routeCoordinates = [anchor] + remaining
