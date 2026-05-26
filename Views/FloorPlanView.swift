@@ -11,24 +11,28 @@ import CoreLocation
 import Combine
 import CoreMotion
 
-@MainActor
 final class NavigationStepCounter: ObservableObject {
     private let pedometer = CMPedometer()
     private var baseline: Int = 0
+    private var pendingSteps: Int = 0
     private var running = false
-    @Published private(set) var pendingSteps: Int = 0
 
-    var isAvailable: Bool { CMPedometer.isStepCountingAvailable() }
+    var isAvailable: Bool {
+        guard CMPedometer.isStepCountingAvailable() else { return false }
+        let raw = Bundle.main.object(forInfoDictionaryKey: "NSMotionUsageDescription") as? String
+        return raw?.isEmpty == false
+    }
 
     func start() {
         guard isAvailable, !running else { return }
         running = true
         baseline = 0
         pendingSteps = 0
-        pedometer.startUpdates(from: Date()) { [weak self] data, _ in
-            guard let self, let data else { return }
-            Task { @MainActor in
-                let total = data.numberOfSteps.intValue
+        pedometer.startUpdates(from: Date()) { [weak self] data, error in
+            if error != nil { return }
+            guard let total = data?.numberOfSteps.intValue else { return }
+            DispatchQueue.main.async {
+                guard let self = self, self.running else { return }
                 let new = total - self.baseline
                 if new > self.pendingSteps { self.pendingSteps = new }
             }
@@ -1610,53 +1614,115 @@ struct MapViewWithOverlay: UIViewRepresentable {
         uiView.isRotateEnabled = !editing
         uiView.isPitchEnabled = !editing
 
-        // Rooms: one persistent custom overlay, redrawn in place.
+        // Rooms: persistent custom overlay.
         if context.coordinator.roomsOverlay == nil {
             let ov = FloorRoomsOverlay()
             context.coordinator.roomsOverlay = ov
             uiView.addOverlay(ov, level: .aboveLabels)
         }
         let visibleRooms = showFloorOverlay ? rooms : []
-        context.coordinator.roomsRenderer?.rooms = visibleRooms
-        context.coordinator.roomsRenderer?.editState = editState
-        context.coordinator.roomsRenderer?.setNeedsDisplay()
-        let withGlobal = visibleRooms.filter { ($0.polygonGlobal?.count ?? 0) >= 3 }.count
-        print("[OVERLAY] showFloorOverlay=\(showFloorOverlay) rooms=\(rooms.count) withPolygonGlobal=\(withGlobal) editing=\(editState != nil)")
-
-        // Route overlays + destination pin: few in number, rebuild only these.
-        let routeOverlays = uiView.overlays.filter { $0 is MKPolyline }
-        uiView.removeOverlays(routeOverlays)
-        uiView.removeAnnotations(uiView.annotations.filter { !($0 is MKUserLocation) })
-
-        if walkedCoordinates.count >= 2 {
-            var walked = walkedCoordinates
-            let trail = MKPolyline(coordinates: &walked, count: walked.count)
-            trail.title = "route-walked"
-            uiView.addOverlay(trail, level: .aboveLabels)
+        let roomsSig = roomsSignature(visibleRooms)
+        let editSig = editSignature(editState)
+        if roomsSig != context.coordinator.cachedRoomsSig ||
+           editSig != context.coordinator.cachedEditSig {
+            context.coordinator.roomsRenderer?.rooms = visibleRooms
+            context.coordinator.roomsRenderer?.editState = editState
+            context.coordinator.roomsRenderer?.setNeedsDisplay()
+            context.coordinator.cachedRoomsSig = roomsSig
+            context.coordinator.cachedEditSig = editSig
         }
 
-        if routeCoordinates.count >= 2 {
-            var coords = routeCoordinates
-            let halo = MKPolyline(coordinates: &coords, count: coords.count)
-            halo.title = "route-halo"
-            let main = MKPolyline(coordinates: &coords, count: coords.count)
-            main.title = "route-main"
-            uiView.addOverlay(halo, level: .aboveLabels)
-            uiView.addOverlay(main, level: .aboveLabels)
-            if let last = routeCoordinates.last {
-                let pin = MKPointAnnotation()
-                pin.coordinate = last
-                pin.title = "Destination"
-                uiView.addAnnotation(pin)
+        let routeSig = polylineSignature(routeCoordinates)
+        let walkedSig = polylineSignature(walkedCoordinates)
+        if routeSig != context.coordinator.cachedRouteSig ||
+           walkedSig != context.coordinator.cachedWalkedSig {
+            let routeOverlays = uiView.overlays.filter { $0 is MKPolyline }
+            uiView.removeOverlays(routeOverlays)
+
+            if walkedCoordinates.count >= 2 {
+                var walked = walkedCoordinates
+                let trail = MKPolyline(coordinates: &walked, count: walked.count)
+                trail.title = "route-walked"
+                uiView.addOverlay(trail, level: .aboveLabels)
+            }
+            if routeCoordinates.count >= 2 {
+                var coords = routeCoordinates
+                let halo = MKPolyline(coordinates: &coords, count: coords.count)
+                halo.title = "route-halo"
+                let main = MKPolyline(coordinates: &coords, count: coords.count)
+                main.title = "route-main"
+                uiView.addOverlay(halo, level: .aboveLabels)
+                uiView.addOverlay(main, level: .aboveLabels)
+            }
+            context.coordinator.cachedRouteSig = routeSig
+            context.coordinator.cachedWalkedSig = walkedSig
+
+            if let last = routeCoordinates.last, routeCoordinates.count >= 2 {
+                if let existing = context.coordinator.destinationAnnotation {
+                    existing.coordinate = last
+                } else {
+                    let pin = MKPointAnnotation()
+                    pin.coordinate = last
+                    pin.title = "Destination"
+                    uiView.addAnnotation(pin)
+                    context.coordinator.destinationAnnotation = pin
+                }
+            } else if let existing = context.coordinator.destinationAnnotation {
+                uiView.removeAnnotation(existing)
+                context.coordinator.destinationAnnotation = nil
             }
         }
 
         if let forced = forcedLocation {
-            let dot = ForcedLocationAnnotation()
-            dot.coordinate = forced
-            dot.title = "You are here"
-            uiView.addAnnotation(dot)
+            if let existing = context.coordinator.forcedAnnotation {
+                if existing.coordinate.latitude != forced.latitude
+                    || existing.coordinate.longitude != forced.longitude {
+                    existing.coordinate = forced
+                }
+            } else {
+                let dot = ForcedLocationAnnotation()
+                dot.coordinate = forced
+                dot.title = "You are here"
+                uiView.addAnnotation(dot)
+                context.coordinator.forcedAnnotation = dot
+            }
+            context.coordinator.cachedForcedLat = forced.latitude
+            context.coordinator.cachedForcedLng = forced.longitude
+        } else if let existing = context.coordinator.forcedAnnotation {
+            uiView.removeAnnotation(existing)
+            context.coordinator.forcedAnnotation = nil
+            context.coordinator.cachedForcedLat = .nan
+            context.coordinator.cachedForcedLng = .nan
         }
+    }
+
+    private func roomsSignature(_ rs: [Room]) -> Int {
+        var hasher = Hasher()
+        hasher.combine(rs.count)
+        for r in rs { hasher.combine(r.id) }
+        return hasher.finalize()
+    }
+
+    private func editSignature(_ e: BuildingEditState?) -> Int {
+        guard let e = e else { return 0 }
+        var hasher = Hasher()
+        hasher.combine(e.deltaLat)
+        hasher.combine(e.deltaLng)
+        hasher.combine(e.deltaBearing)
+        hasher.combine(e.scaleMultiplier)
+        return hasher.finalize()
+    }
+
+    private func polylineSignature(_ coords: [CLLocationCoordinate2D]) -> Int {
+        var hasher = Hasher()
+        hasher.combine(coords.count)
+        if let first = coords.first {
+            hasher.combine(first.latitude); hasher.combine(first.longitude)
+        }
+        if let last = coords.last {
+            hasher.combine(last.latitude); hasher.combine(last.longitude)
+        }
+        return hasher.finalize()
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -1667,6 +1733,15 @@ struct MapViewWithOverlay: UIViewRepresentable {
 
         var roomsOverlay: FloorRoomsOverlay?
         weak var roomsRenderer: FloorRoomsRenderer?
+
+        var cachedRoomsSig: Int = 0
+        var cachedEditSig: Int = 0
+        var cachedRouteSig: Int = -1
+        var cachedWalkedSig: Int = -1
+        var cachedForcedLat: Double = .nan
+        var cachedForcedLng: Double = .nan
+        weak var forcedAnnotation: ForcedLocationAnnotation?
+        weak var destinationAnnotation: MKPointAnnotation?
 
         weak var editPan: UIPanGestureRecognizer?
         weak var editPinch: UIPinchGestureRecognizer?
