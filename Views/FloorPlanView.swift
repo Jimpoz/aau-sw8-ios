@@ -9,6 +9,49 @@ import SwiftUI
 import MapKit
 import CoreLocation
 import Combine
+import CoreMotion
+
+@MainActor
+final class NavigationStepCounter: ObservableObject {
+    private let pedometer = CMPedometer()
+    private var baseline: Int = 0
+    private var running = false
+    @Published private(set) var pendingSteps: Int = 0
+
+    var isAvailable: Bool { CMPedometer.isStepCountingAvailable() }
+
+    func start() {
+        guard isAvailable, !running else { return }
+        running = true
+        baseline = 0
+        pendingSteps = 0
+        pedometer.startUpdates(from: Date()) { [weak self] data, _ in
+            guard let self, let data else { return }
+            Task { @MainActor in
+                let total = data.numberOfSteps.intValue
+                let new = total - self.baseline
+                if new > self.pendingSteps { self.pendingSteps = new }
+            }
+        }
+    }
+
+    /// Consume any pending steps since the last call. Returns 0 if nothing new
+    /// was detected since the last consume, so the dot stays still.
+    func consume() -> Int {
+        let d = pendingSteps
+        baseline += d
+        pendingSteps = 0
+        return d
+    }
+
+    func stop() {
+        guard running else { return }
+        running = false
+        pedometer.stopUpdates()
+        baseline = 0
+        pendingSteps = 0
+    }
+}
 
 final class MapActionProxy: ObservableObject {
     weak var mapView: MKMapView?
@@ -128,7 +171,10 @@ struct FloorPlanView: View {
     @State private var simulatedArcLengthMeters: Double = 0
     @State private var lastSimulationTick: Date?
     @State private var simulationTimer: Timer?
-    private let averageWalkingSpeedMS: Double = 1.4
+    @State private var arrivalBanner: String?
+    @StateObject private var stepCounter = NavigationStepCounter()
+    private let strideMeters: Double = 0.762  // ≈ avg adult stride
+    private let arrivalRadiusMeters: Double = 5
     private let degradedAccuracyMeters: Double = 30
     private let degradedFixAgeSeconds: Double = 8
     @State private var editState: BuildingEditState?
@@ -247,6 +293,22 @@ struct FloorPlanView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(.black.opacity(0.75), in: RoundedRectangle(cornerRadius: 12))
                     .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.green.opacity(0.45)))
+                    .padding(.horizontal, 16)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+                if let msg = arrivalBanner {
+                    HStack(spacing: 8) {
+                        Image(systemName: "flag.checkered")
+                            .foregroundStyle(.green)
+                        Text(msg)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.white)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.black.opacity(0.78), in: RoundedRectangle(cornerRadius: 12))
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.green.opacity(0.5)))
                     .padding(.horizontal, 16)
                     .transition(.move(edge: .top).combined(with: .opacity))
                 }
@@ -531,6 +593,7 @@ struct FloorPlanView: View {
     private func cancelRoute() {
         navigationService.currentRoute = nil
         routeCoordinates = []
+        walkedCoordinates = []
         routeDestination = nil
         pendingRouteSuggestion = nil
         searchText = ""
@@ -539,13 +602,16 @@ struct FloorPlanView: View {
         }
         isNavigating = false
         isResolvingRoute = false
+        stepCounter.stop()
         teardownSimulation()
     }
 
     private func startNavigation() {
         guard navigationService.currentRoute != nil else { return }
         isNavigating = true
+        arrivalBanner = nil
         mapProxy.startFollowingUser()
+        stepCounter.start()
         initSimulationProgress()
         startSimulationTimer()
     }
@@ -553,6 +619,7 @@ struct FloorPlanView: View {
     private func stopNavigation() {
         isNavigating = false
         mapProxy.stopFollowingUser()
+        stepCounter.stop()
         teardownSimulation()
     }
 
@@ -577,10 +644,10 @@ struct FloorPlanView: View {
         guard isNavigating else { teardownSimulation(); return }
         guard userOnRouteFloor, routeCoordinates.count >= 2 else {
             simulatedPosition = nil
+            _ = stepCounter.consume()
             return
         }
         let now = Date()
-        let dt = lastSimulationTick.map { now.timeIntervalSince($0) } ?? 0.5
         lastSimulationTick = now
 
         let fix = locationManager.lastLocation
@@ -592,10 +659,15 @@ struct FloorPlanView: View {
         if blueDotReliable {
             simulatedPosition = nil
             simulatedArcLengthMeters = 0
+            _ = stepCounter.consume()
             return
         }
 
-        simulatedArcLengthMeters += dt * averageWalkingSpeedMS
+        // Advance only when the phone detects new steps, stay still otherwise.
+        let newSteps = stepCounter.consume()
+        guard newSteps > 0 else { return }
+
+        simulatedArcLengthMeters += Double(newSteps) * strideMeters
         guard let newSim = coordinate(
             atArcLength: simulatedArcLengthMeters,
             on: routeCoordinates
@@ -604,6 +676,19 @@ struct FloorPlanView: View {
         simulatedPosition = newSim
         simulatedArcLengthMeters = 0
         rebuildRouteCoordinates(navigationService.currentRoute)
+
+        if let dest = routeCoordinates.last,
+           haversineMeters(newSim, dest) <= arrivalRadiusMeters {
+            announceArrival()
+        }
+    }
+
+    private func announceArrival() {
+        withAnimation { arrivalBanner = "You have reached your destination." }
+        cancelRoute()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+            withAnimation { arrivalBanner = nil }
+        }
     }
 
     private func initSimulationProgress() {
@@ -692,7 +777,7 @@ struct FloorPlanView: View {
         let userLoc = CLLocation(latitude: user.latitude, longitude: user.longitude)
         let endLoc = CLLocation(latitude: end.latitude, longitude: end.longitude)
         if userLoc.distance(from: endLoc) <= arrivalRadius {
-            cancelRoute()
+            announceArrival()
         }
     }
 
