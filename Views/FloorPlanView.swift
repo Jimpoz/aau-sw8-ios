@@ -554,14 +554,23 @@ struct FloorPlanView: View {
         .onReceive(locationManager.$horizontalAccuracyMeters) { _ in syncFromLocationManager() }
         .onChange(of: diContainer.forcedUserSpaceId) { newValue in
             lastAnchoredForcedSpaceId = nil
-            if newValue != nil, let targetFloor = mapNav.pendingFloorIndex {
+            if newValue != nil {
                 let floors = floorService.floors
-                if !floors.isEmpty,
-                   let idx = floors.firstIndex(where: { $0.floorIndex == targetFloor }) {
-                    if vm.selectedFloor != idx {
-                        vm.selectedFloor = idx
+                if !floors.isEmpty {
+                    var matchedIdx: Int?
+                    if let pid = mapNav.pendingFloorId,
+                       let i = floors.firstIndex(where: { $0.id == pid }) {
+                        matchedIdx = i
+                    } else if let target = mapNav.pendingFloorIndex,
+                              let i = floors.firstIndex(where: { $0.floorIndex == target }) {
+                        matchedIdx = i
                     }
-                    barometer.recalibrate(toFloorIndex: targetFloor)
+                    if let idx = matchedIdx {
+                        if vm.selectedFloor != idx {
+                            vm.selectedFloor = idx
+                        }
+                        barometer.recalibrate(toFloorIndex: floors[idx].floorIndex)
+                    }
                 }
             }
 
@@ -1295,19 +1304,29 @@ struct FloorPlanView: View {
             await MainActor.run {
                 vm.availableFloors = summaries.map { $0.floorIndex }
                 vm.availableFloorLabels = summaries.map { floorLabel(for: $0) }
+                let pendingId = mapNav.pendingFloorId
                 let pendingBaseline = mapNav.pendingFloorIndex
                 if !summaries.isEmpty {
-                    if let target = pendingBaseline,
+                    if let pid = pendingId,
+                       let i = summaries.firstIndex(where: { $0.id == pid }) {
+                        vm.selectedFloor = i
+                        mapNav.pendingFloorId = nil
+                        mapNav.pendingFloorIndex = nil
+                    } else if let target = pendingBaseline,
                        let i = summaries.firstIndex(where: { $0.floorIndex == target }) {
                         vm.selectedFloor = i
                         mapNav.pendingFloorIndex = nil
+                        mapNav.pendingFloorId = nil
                     } else {
                         vm.selectedFloor = summaries.firstIndex { $0.floorIndex == 0 } ?? 0
                     }
                 }
+                let baseline = pendingBaseline
+                    ?? summaries.first(where: { $0.id == pendingId })?.floorIndex
+                    ?? 0
                 barometer.start(
                     floors: summaries,
-                    baselineFloorIndex: pendingBaseline ?? 0
+                    baselineFloorIndex: baseline
                 )
             }
             if let active = activeFloorId(in: summaries) {
@@ -1842,14 +1861,21 @@ struct MapViewWithOverlay: UIViewRepresentable {
             if let polyline = overlay as? MKPolyline {
                 let r = MKPolylineRenderer(polyline: polyline)
                 if polyline.title == "route-walked" {
-                    r.strokeColor = UIColor.gray.withAlphaComponent(0.4)
-                    r.lineWidth = 4.0
-                } else if polyline.title == "route-halo" {
-                    r.strokeColor = UIColor.white.withAlphaComponent(0.95)
-                    r.lineWidth = 9.0
-                } else {
-                    r.strokeColor = UIColor.systemBlue
+                    r.strokeColor = UIColor(
+                        red: 0.55, green: 0.58, blue: 0.62, alpha: 0.7
+                    )
                     r.lineWidth = 5.0
+                    r.lineDashPattern = [2, 8]  
+                } else if polyline.title == "route-halo" {
+                    r.strokeColor = UIColor(
+                        red: 0.05, green: 0.30, blue: 0.66, alpha: 1.0
+                    )
+                    r.lineWidth = 11.0
+                } else {
+                    r.strokeColor = UIColor(
+                        red: 0.26, green: 0.55, blue: 0.99, alpha: 1.0
+                    )
+                    r.lineWidth = 7.0
                 }
                 r.lineJoin = .round
                 r.lineCap = .round

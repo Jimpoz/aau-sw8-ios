@@ -88,9 +88,8 @@ final class CameraViewModel: NSObject, ObservableObject {
                 mapNav.pendingBuildingCoordinate = coord
             }
         }
-        if let floorIndex = location.floorIndex {
-            mapNav.pendingFloorIndex = floorIndex
-        }
+        mapNav.pendingFloorIndex = location.floorIndex
+        mapNav.pendingFloorId = location.floorId
 
         if let spaceId = location.spaceId {
             container.forcedUserSpaceId = spaceId
