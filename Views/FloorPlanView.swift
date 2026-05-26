@@ -11,49 +11,49 @@ import CoreLocation
 import Combine
 import CoreMotion
 
-final class NavigationStepCounter: ObservableObject {
-    private let pedometer = CMPedometer()
-    private var baseline: Int = 0
-    private var pendingSteps: Int = 0
+final class NavigationMotionDetector: ObservableObject {
+    private let motion = CMMotionManager()
+    private let queue = OperationQueue()
+    private var lastMotionAt: Date?
     private var running = false
 
+    private let accelerationThreshold: Double = 0.05
+    private let motionTimeoutSeconds: Double = 1.2
+
     var isAvailable: Bool {
-        guard CMPedometer.isStepCountingAvailable() else { return false }
+        guard motion.isDeviceMotionAvailable else { return false }
         let raw = Bundle.main.object(forInfoDictionaryKey: "NSMotionUsageDescription") as? String
         return raw?.isEmpty == false
+    }
+
+    var isMoving: Bool {
+        guard let last = lastMotionAt else { return false }
+        return Date().timeIntervalSince(last) <= motionTimeoutSeconds
     }
 
     func start() {
         guard isAvailable, !running else { return }
         running = true
-        baseline = 0
-        pendingSteps = 0
-        pedometer.startUpdates(from: Date()) { [weak self] data, error in
-            if error != nil { return }
-            guard let total = data?.numberOfSteps.intValue else { return }
-            DispatchQueue.main.async {
-                guard let self = self, self.running else { return }
-                let new = total - self.baseline
-                if new > self.pendingSteps { self.pendingSteps = new }
+        lastMotionAt = nil
+        queue.maxConcurrentOperationCount = 1
+        motion.deviceMotionUpdateInterval = 1.0 / 20.0
+        motion.startDeviceMotionUpdates(to: queue) { [weak self] data, _ in
+            guard let self = self, let d = data else { return }
+            let ax = d.userAcceleration.x
+            let ay = d.userAcceleration.y
+            let az = d.userAcceleration.z
+            let mag = (ax * ax + ay * ay + az * az).squareRoot()
+            if mag > self.accelerationThreshold {
+                self.lastMotionAt = Date()
             }
         }
-    }
-
-    /// Consume any pending steps since the last call. Returns 0 if nothing new
-    /// was detected since the last consume, so the dot stays still.
-    func consume() -> Int {
-        let d = pendingSteps
-        baseline += d
-        pendingSteps = 0
-        return d
     }
 
     func stop() {
         guard running else { return }
         running = false
-        pedometer.stopUpdates()
-        baseline = 0
-        pendingSteps = 0
+        motion.stopDeviceMotionUpdates()
+        lastMotionAt = nil
     }
 }
 
@@ -176,8 +176,8 @@ struct FloorPlanView: View {
     @State private var lastSimulationTick: Date?
     @State private var simulationTimer: Timer?
     @State private var arrivalBanner: String?
-    @StateObject private var stepCounter = NavigationStepCounter()
-    private let strideMeters: Double = 0.762  // ≈ avg adult stride
+    @StateObject private var motionDetector = NavigationMotionDetector()
+    private let averageWalkingSpeedMS: Double = 1.4
     private let arrivalRadiusMeters: Double = 5
     private let degradedAccuracyMeters: Double = 30
     private let degradedFixAgeSeconds: Double = 8
@@ -606,7 +606,7 @@ struct FloorPlanView: View {
         }
         isNavigating = false
         isResolvingRoute = false
-        stepCounter.stop()
+        motionDetector.stop()
         teardownSimulation()
     }
 
@@ -615,7 +615,7 @@ struct FloorPlanView: View {
         isNavigating = true
         arrivalBanner = nil
         mapProxy.startFollowingUser()
-        stepCounter.start()
+        motionDetector.start()
         initSimulationProgress()
         startSimulationTimer()
     }
@@ -623,7 +623,7 @@ struct FloorPlanView: View {
     private func stopNavigation() {
         isNavigating = false
         mapProxy.stopFollowingUser()
-        stepCounter.stop()
+        motionDetector.stop()
         teardownSimulation()
     }
 
@@ -648,10 +648,10 @@ struct FloorPlanView: View {
         guard isNavigating else { teardownSimulation(); return }
         guard userOnRouteFloor, routeCoordinates.count >= 2 else {
             simulatedPosition = nil
-            _ = stepCounter.consume()
             return
         }
         let now = Date()
+        let dt = lastSimulationTick.map { now.timeIntervalSince($0) } ?? 0.5
         lastSimulationTick = now
 
         let fix = locationManager.lastLocation
@@ -663,15 +663,13 @@ struct FloorPlanView: View {
         if blueDotReliable {
             simulatedPosition = nil
             simulatedArcLengthMeters = 0
-            _ = stepCounter.consume()
             return
         }
 
-        // Advance only when the phone detects new steps, stay still otherwise.
-        let newSteps = stepCounter.consume()
-        guard newSteps > 0 else { return }
+        // Advance only while the phone reports motion
+        guard motionDetector.isMoving else { return }
 
-        simulatedArcLengthMeters += Double(newSteps) * strideMeters
+        simulatedArcLengthMeters += dt * averageWalkingSpeedMS
         guard let newSim = coordinate(
             atArcLength: simulatedArcLengthMeters,
             on: routeCoordinates
