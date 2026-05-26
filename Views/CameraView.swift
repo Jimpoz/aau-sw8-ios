@@ -218,12 +218,39 @@ struct CameraView: View {
             }
             .onAppear {
                 vm.configure(with: container, coordinator: mapNav)
-                if !isPreview { vm.configureAndMaybeStart() }
+                if !isPreview {
+                    vm.configureAndMaybeStart()
+                    Task { await bootstrapCameraContext() }
+                }
             }
             .onDisappear {
                 if !isPreview { vm.stop() }
             }
         }
+@MainActor
+    private func bootstrapCameraContext() async {
+        guard let orgId = authService.principal?.organizationId else { return }
+
+        if container.floorPlanService.buildings.isEmpty {
+            await container.floorPlanService.fetchVisibleBuildings()
+        }
+
+        let buildings = container.floorPlanService.buildings
+        guard !buildings.isEmpty else { return }
+
+        guard let orgCampus = buildings
+            .first(where: { $0.organizationId == orgId })?.campusId
+        else { return }
+
+        if let buildingId = container.currentBuildingId {
+            let isMine = buildings.contains { $0.id == buildingId && $0.organizationId == orgId }
+            if !isMine { container.currentBuildingId = nil }
+        }
+
+        guard container.currentCampusId != orgCampus else { return }
+        container.currentCampusId = orgCampus
+        vm.reconnectWithCampus(orgCampus)
+    }
 
     private func requestDirections() {
         let q = destinationQuery.trimmingCharacters(in: .whitespaces)
