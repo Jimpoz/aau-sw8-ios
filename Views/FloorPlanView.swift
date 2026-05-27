@@ -173,15 +173,17 @@ struct FloorPlanView: View {
     @State private var simulatedArcLengthMeters: Double = 0
     @State private var lastSimulationTick: Date?
     @State private var simulationTimer: Timer?
-    /// Tracks the forced-space ID that has already been used as a dead-reckoning
-    /// anchor so that phase 1 of tickSimulation anchors only once per new snap.
     @State private var lastAnchoredForcedSpaceId: String?
+    @State private var forcedSpaceFloorId: String?
+    @State private var forcedSpaceFloorIndex: Int?
+    /// Set to true once applyForcedLocationIfReady has successfully placed the
+    /// user marker. While true, applyForcedLocationIfReady will NOT switch
+    /// floors back — the user is free to browse other floors for routing.
+    @State private var forcedSpaceHasAnchored: Bool = false
     @State private var arrivalBanner: String?
     @StateObject private var motionDetector = NavigationMotionDetector()
     private let averageWalkingSpeedMS: Double = 1.4
     private let arrivalRadiusMeters: Double = 5
-    // Only trust GPS when it's better than 8 m — indoor GPS is usually
-    // 20–50 m so this keeps the dead-reckoning dot active while inside.
     private let degradedAccuracyMeters: Double = 8
     private let degradedFixAgeSeconds: Double = 8
     @State private var editState: BuildingEditState?
@@ -528,8 +530,6 @@ struct FloorPlanView: View {
             if showFloorOverlay, let buildingId = currentBuildingId {
                 loadBuildingFloorData(buildingId: buildingId)
             }
-            // Publish the displayed floor (manual pick or barometer auto-switch)
-            // so the assistant can answer "which floor am I on".
             diContainer.currentFloorIndex = displayedFloorIndex
             rebuildRouteCoordinates(navigationService.currentRoute)
         }
@@ -538,7 +538,11 @@ struct FloorPlanView: View {
         .onChange(of: mapNav.selectedTab) { newTab in
             guard newTab == .floorPlan,
                   showFloorOverlay,
-                  let buildingId = currentBuildingId else { return }
+                  let buildingId = currentBuildingId,
+                  mapNav.pendingFloorId == nil,
+                  mapNav.pendingFloorIndex == nil,
+                  diContainer.forcedUserSpaceId == nil
+            else { return }
             loadBuildingFloorData(buildingId: buildingId)
         }
         .onChange(of: navigationService.currentRoute) { route in
@@ -554,30 +558,57 @@ struct FloorPlanView: View {
         .onReceive(locationManager.$horizontalAccuracyMeters) { _ in syncFromLocationManager() }
         .onChange(of: diContainer.forcedUserSpaceId) { newValue in
             lastAnchoredForcedSpaceId = nil
-            if newValue != nil {
+            forcedSpaceHasAnchored = false   // new snap → allow floor auto-switch once
+            if let spaceId = newValue {
+                forcedSpaceFloorId    = mapNav.pendingFloorId
+                forcedSpaceFloorIndex = mapNav.pendingFloorIndex
+
                 let floors = floorService.floors
                 if !floors.isEmpty {
                     var matchedIdx: Int?
-                    if let pid = mapNav.pendingFloorId,
+                    if let pid = forcedSpaceFloorId,
                        let i = floors.firstIndex(where: { $0.id == pid }) {
                         matchedIdx = i
-                    } else if let target = mapNav.pendingFloorIndex,
+                    } else if let target = forcedSpaceFloorIndex,
                               let i = floors.firstIndex(where: { $0.floorIndex == target }) {
                         matchedIdx = i
                     }
                     if let idx = matchedIdx {
-                        if vm.selectedFloor != idx {
-                            vm.selectedFloor = idx
-                        }
+                        if vm.selectedFloor != idx { vm.selectedFloor = idx }
                         barometer.recalibrate(toFloorIndex: floors[idx].floorIndex)
                     }
                 }
+
+                if forcedSpaceFloorId == nil && forcedSpaceFloorIndex == nil {
+                    Task {
+                        guard let floorIdx = await floorService.fetchSpaceFloorIndex(spaceId: spaceId) else { return }
+                        await MainActor.run {
+                            guard diContainer.forcedUserSpaceId == spaceId else { return }
+                            forcedSpaceFloorIndex = floorIdx
+                            let currentFloors = floorService.floors
+                            if let i = currentFloors.firstIndex(where: { $0.floorIndex == floorIdx }) {
+                                if vm.selectedFloor != i {
+                                    vm.selectedFloor = i
+                                    barometer.recalibrate(toFloorIndex: floorIdx)
+                                }
+                            }
+                            if mapNav.pendingFloorIndex == nil {
+                                mapNav.pendingFloorIndex = floorIdx
+                            }
+                            applyForcedLocationIfReady()
+                        }
+                    }
+                }
+            } else {
+                forcedSpaceFloorId    = nil
+                forcedSpaceFloorIndex = nil
             }
 
             applyForcedLocationIfReady()
             if newValue != nil { flashSnapConfirmation() }
         }
         .onChange(of: floorService.rooms.map(\.id)) { _ in applyForcedLocationIfReady() }
+        .onChange(of: floorService.floors.map(\.id)) { _ in applyForcedLocationIfReady() }
         .onChange(of: barometer.currentFloorIndex) { newFloor in
             guard diContainer.forcedUserSpaceId == nil else { return }
             guard let newFloor,
@@ -668,9 +699,6 @@ struct FloorPlanView: View {
 
     private func tickSimulation() {
         guard isNavigating else { teardownSimulation(); return }
-        // Do NOT gate on userOnRouteFloor here — simulation advances regardless
-        // of which floor is displayed. The liveDotLocation computed property gates
-        // whether the dot is actually rendered on the current floor overlay.
         guard routeCoordinates.count >= 2 else {
             simulatedPosition = nil
             return
@@ -1177,10 +1205,6 @@ struct FloorPlanView: View {
         }
         if let bid = currentBuildingId {
             context["building_id"] = bid
-            // Scope to the building's campus, not the AssistantService
-            // init default. Falls back to whatever DIContainer last
-            // saw if the current building isn't in the locator list
-            // yet (race during initial load).
             if let cid = floorService.buildings.first(where: { $0.id == bid })?.campusId
                 ?? diContainer.currentCampusId {
                 context["campus_id"] = cid
@@ -1192,6 +1216,7 @@ struct FloorPlanView: View {
         let knownNow = knownBuildings
         let userLoc0 = userLocation
         let forcedSpaceId = diContainer.forcedUserSpaceId
+        let currentBldId = currentBuildingId
 
         Task {
 
@@ -1205,28 +1230,31 @@ struct FloorPlanView: View {
             }
 
             if forcedSpaceId == nil, let top, let loc = userLoc0 {
-                let building = top.buildingId.flatMap { id in
-                    knownNow.first(where: { $0.id == id })
-                }
-                let target = building?.coordinate ?? top.coordinate
-                if let target {
-                    let dist = CLLocation(latitude: loc.latitude, longitude: loc.longitude)
-                        .distance(from: CLLocation(latitude: target.latitude, longitude: target.longitude))
-                    if dist > 80 {
-                        let buildingName = building?.name ?? "the building it's in"
-                        await MainActor.run {
-                            routeDestination = RouteDestination(
-                                title: destination,
-                                subtitle: "You're too far for indoor directions",
-                                steps: [
-                                    "\(top.name) is in \(buildingName), about \(Int(dist)) m away.",
-                                    "Indoor directions are only available once you're at or inside the building.",
-                                    "Use the world map to walk there first, then ask again."
-                                ]
-                            )
-                            isResolvingRoute = false
+                let alreadyInsideBuilding = currentBldId != nil && currentBldId == top.buildingId
+                if !alreadyInsideBuilding {
+                    let building = top.buildingId.flatMap { id in
+                        knownNow.first(where: { $0.id == id })
+                    }
+                    let target = building?.coordinate ?? top.coordinate
+                    if let target {
+                        let dist = CLLocation(latitude: loc.latitude, longitude: loc.longitude)
+                            .distance(from: CLLocation(latitude: target.latitude, longitude: target.longitude))
+                        if dist > 80 {
+                            let buildingName = building?.name ?? "the building it's in"
+                            await MainActor.run {
+                                routeDestination = RouteDestination(
+                                    title: destination,
+                                    subtitle: "You're too far for indoor directions",
+                                    steps: [
+                                        "\(top.name) is in \(buildingName), about \(Int(dist)) m away.",
+                                        "Indoor directions are only available once you're at or inside the building.",
+                                        "Use the world map to walk there first, then ask again."
+                                    ]
+                                )
+                                isResolvingRoute = false
+                            }
+                            return
                         }
-                        return
                     }
                 }
             }
@@ -1421,16 +1449,49 @@ struct FloorPlanView: View {
 
     private func applyForcedLocationIfReady() {
         guard let spaceId = diContainer.forcedUserSpaceId else { return }
+
+        if floorService.rooms.first(where: { $0.id == spaceId }) == nil {
+            guard !forcedSpaceHasAnchored else { return }
+            let floors = floorService.floors
+            guard !floors.isEmpty else { return }
+            var switchedIdx: Int?
+            if let fid = forcedSpaceFloorId,
+               let i = floors.firstIndex(where: { $0.id == fid }) {
+                switchedIdx = i
+            } else if let fi = forcedSpaceFloorIndex,
+                      let i = floors.firstIndex(where: { $0.floorIndex == fi }) {
+                switchedIdx = i
+            }
+            if let idx = switchedIdx, vm.selectedFloor != idx {
+                print("[FLOORPLAN] applyForcedLocation: switching to floor idx=\(idx) for snap")
+                vm.selectedFloor = idx
+                barometer.recalibrate(toFloorIndex: floors[idx].floorIndex)
+            }
+            return
+        }
+
         guard let room = floorService.rooms.first(where: { $0.id == spaceId }) else { return }
+        let resolvedCoord: CLLocationCoordinate2D?
         if let coord = room.centroidGlobal {
             userLocation = coord
             locationAccuracy = 0  // exact: we know the room, not "GPS-ish"
+            resolvedCoord = coord
         } else if let polygon = room.polygonGlobal, !polygon.isEmpty {
             let lat = polygon.reduce(0.0) { $0 + $1.latitude } / Double(polygon.count)
             let lng = polygon.reduce(0.0) { $0 + $1.longitude } / Double(polygon.count)
-            userLocation = CLLocationCoordinate2D(latitude: lat, longitude: lng)
+            let coord = CLLocationCoordinate2D(latitude: lat, longitude: lng)
+            userLocation = coord
             locationAccuracy = 0
+            resolvedCoord = coord
+        } else {
+            resolvedCoord = nil
         }
+        if let coord = resolvedCoord {
+            mapProxy.flyTo(coord)
+        }
+        // Mark anchored so subsequent room-load events (triggered when the user
+        // browses to another floor) do not switch the floor back.
+        forcedSpaceHasAnchored = true
     }
 
     private func handleSearch(_ query: String) {
@@ -1911,7 +1972,10 @@ struct MapViewWithOverlay: UIViewRepresentable {
             let tapCoord = mv.convert(g.location(in: mv), toCoordinateFrom: mv)
             let tapPoint = MKMapPoint(tapCoord)
             let tapCG = CGPoint(x: tapPoint.x, y: tapPoint.y)
-            for room in parent.rooms {
+            let sortedRooms = parent.rooms.sorted {
+                mapPointPolygonArea($0.polygonGlobal ?? []) < mapPointPolygonArea($1.polygonGlobal ?? [])
+            }
+            for room in sortedRooms {
                 guard let poly = room.polygonGlobal, poly.count >= 3 else { continue }
                 let path = CGMutablePath()
                 for (i, c) in poly.enumerated() {
@@ -1925,6 +1989,19 @@ struct MapViewWithOverlay: UIViewRepresentable {
                     return
                 }
             }
+        }
+
+        private func mapPointPolygonArea(_ coords: [CLLocationCoordinate2D]) -> Double {
+            guard coords.count >= 3 else { return 0 }
+            var area = 0.0
+            let pts = coords.map { MKMapPoint($0) }
+            let n = pts.count
+            for i in 0..<n {
+                let j = (i + 1) % n
+                area += pts[i].x * pts[j].y
+                area -= pts[j].x * pts[i].y
+            }
+            return abs(area) * 0.5
         }
 
         @objc func handleEditPan(_ g: UIPanGestureRecognizer) {
@@ -1969,8 +2046,6 @@ struct MapViewWithOverlay: UIViewRepresentable {
             case .began:
                 rotationBaseBearing = parent.editState?.deltaBearing ?? 0
             case .changed:
-                // UIRotationGestureRecognizer.rotation is clockwise-positive in
-                // screen space; map bearing increases counter-clockwise, so negate.
                 let deg = Double(g.rotation) * 180 / .pi
                 parent.editState?.deltaBearing = rotationBaseBearing - deg
             default:

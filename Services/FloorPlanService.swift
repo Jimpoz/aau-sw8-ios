@@ -270,6 +270,23 @@ class FloorPlanService: ObservableObject {
     }
 
     @discardableResult
+    func fetchSpaceFloorIndex(spaceId: String) async -> Int? {
+        var request = URLRequest(url: baseURL.appendingPathComponent("spaces/\(spaceId)"))
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(AppSecrets.apiSecret, forHTTPHeaderField: "X-Api-Key")
+        request.attachBearer()
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse,
+                  (200...299).contains(http.statusCode) else { return nil }
+            struct SpaceFloorInfo: Decodable { let floor_index: Int? }
+            let info = try JSONDecoder().decode(SpaceFloorInfo.self, from: data)
+            return info.floor_index
+        } catch {
+            return nil
+        }
+    }
+
     func fetchFloorList(buildingId: String) async -> [FloorSummary] {
         var request = URLRequest(url: baseURL.appendingPathComponent("buildings/\(buildingId)/floors"))
         request.setValue("application/json", forHTTPHeaderField: "Accept")
