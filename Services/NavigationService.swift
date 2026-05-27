@@ -82,12 +82,22 @@ class NavigationService: ObservableObject {
                 )
             }
 
+            let polylinesByFloor: [Int: [[Double]]] = {
+                guard let raw = serverRoute.polylines_by_floor else { return [:] }
+                var out: [Int: [[Double]]] = [:]
+                for (k, v) in raw {
+                    if let fi = Int(k) { out[fi] = v }
+                }
+                return out
+            }()
+
             DispatchQueue.main.async {
                 self.currentRoute = NavigationRoute(
                     from: serverRoute.from_space_id,
                     to: serverRoute.to_space_id,
                     path: serverRoute.steps.map { $0.space_id },
                     polyline: serverRoute.polyline ?? [],
+                    polylinesByFloor: polylinesByFloor,
                     totalDistance: serverRoute.total_cost,
                     steps: navSteps
                 )
@@ -224,6 +234,8 @@ private struct ServerRoute: Decodable {
     let total_cost: Double
     let steps: [ServerRouteStep]
     let polyline: [[Double]]?
+    // Keys are floor_index as strings (JSON object keys are always strings).
+    let polylines_by_floor: [String: [[Double]]]?
 }
 
 struct NavigationRoute: Equatable {
@@ -231,6 +243,10 @@ struct NavigationRoute: Equatable {
     let to: String
     let path: [String]
     let polyline: [[Double]]
+    /// Server-computed smoothed polyline broken down by floor index.
+    /// Used for multi-floor routes so each floor renders the correct segment
+    /// with shared-edge waypoints and room-pull smoothing, not raw centroids.
+    let polylinesByFloor: [Int: [[Double]]]
     let totalDistance: Double
     let steps: [NavigationStep]
 }

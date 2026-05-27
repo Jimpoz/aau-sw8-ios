@@ -881,11 +881,17 @@ struct FloorPlanView: View {
         let target = displayedFloorIndex
         let pathCoords: [CLLocationCoordinate2D]
 
-        if !isMultiFloor, !r.polyline.isEmpty {
-            pathCoords = r.polyline.compactMap { pair in
+        let toPoly: ([[Double]]) -> [CLLocationCoordinate2D] = { raw in
+            raw.compactMap { pair in
                 guard pair.count >= 2 else { return nil }
                 return CLLocationCoordinate2D(latitude: pair[0], longitude: pair[1])
             }
+        }
+
+        if !isMultiFloor, !r.polyline.isEmpty {
+            pathCoords = toPoly(r.polyline)
+        } else if let target, let floorPoly = r.polylinesByFloor[target], !floorPoly.isEmpty {
+            pathCoords = toPoly(floorPoly)
         } else if let target {
             pathCoords = sliceStepsForFloor(r.steps, displayedFloor: target)
         } else {
