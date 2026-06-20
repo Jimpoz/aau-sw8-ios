@@ -238,10 +238,13 @@ final class AssistantViewModel: ObservableObject {
         error = nil
         
         var context: [String: Any] = [:]
-        let userCoord = locationManager?.lastLocation?.coordinate
+        let userCoord = container?.forcedUserCoordinate ?? locationManager?.lastLocation?.coordinate
         if let coord = userCoord {
             context["x"] = coord.longitude
             context["y"] = coord.latitude
+        }
+        if let spaceId = container?.forcedUserSpaceId {
+            context["space_id"] = spaceId
         }
 
         var resolvedCampusId = container?.currentCampusId
