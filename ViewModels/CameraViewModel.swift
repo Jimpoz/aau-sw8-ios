@@ -16,6 +16,7 @@ import UIKit
 final class CameraViewModel: NSObject, ObservableObject {
     @Published var authState: AVAuthorizationStatus = .notDetermined
     @Published var boxes: [DetectionBox] = []
+    @Published var findLocationEnabled: Bool = true
 
     let session = AVCaptureSession()
     private let sessionQueue = DispatchQueue(label: "camera.session.queue")
@@ -66,12 +67,13 @@ final class CameraViewModel: NSObject, ObservableObject {
     }
 
     private func handleLocationSnap(_ location: VisionResolvedLocation) {
+        guard findLocationEnabled else { return }
         guard let container, let mapNav else { return }
 
+        guard let spaceId = location.spaceId, !spaceId.isEmpty else { return }
 
-        let snapKey = location.spaceId ?? location.id
-        if snapKey == lastHandledSpaceId { return }
-        lastHandledSpaceId = snapKey
+        if spaceId == lastHandledSpaceId { return }
+        lastHandledSpaceId = spaceId
 
         if let buildingId = location.buildingId {
             container.currentBuildingId = buildingId
@@ -91,9 +93,7 @@ final class CameraViewModel: NSObject, ObservableObject {
         mapNav.pendingFloorIndex = location.floorIndex
         mapNav.pendingFloorId = location.floorId
 
-        if let spaceId = location.spaceId {
-            container.forcedUserSpaceId = spaceId
-        }
+        container.forcedUserSpaceId = spaceId
         if let lat = location.centroidLat, let lng = location.centroidLng {
             container.forcedUserCoordinate = CLLocationCoordinate2D(
                 latitude: lat, longitude: lng,

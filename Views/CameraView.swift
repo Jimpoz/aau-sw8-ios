@@ -21,7 +21,6 @@ struct CameraView: View {
     @State private var isAskingDirections: Bool = false
     @State private var landmarkCapture: LandmarkCapture?
     @State private var isCapturingForLandmark: Bool = false
-    @State private var findLocationMode: Bool = true
 
     private var isPreview: Bool {
         ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1"
@@ -55,8 +54,8 @@ struct CameraView: View {
                     ForEach(0..<vm.boxes.count, id: \.self) { index in
                         let box = vm.boxes[index]
                         let shouldShow = box.isLandmarkMatch
-                            ? (findLocationMode && box.confidence > 0.85)
-                            : !findLocationMode
+                            ? (vm.findLocationEnabled && box.confidence > 0.85)
+                            : !vm.findLocationEnabled
                         if shouldShow {
                             let x = box.rect.minX * geo.size.width
                             let width = box.rect.width * geo.size.width
@@ -151,28 +150,28 @@ struct CameraView: View {
                         }
 
                         Button {
-                            findLocationMode.toggle()
+                            vm.findLocationEnabled.toggle()
                         } label: {
                             HStack(spacing: 6) {
-                                Image(systemName: findLocationMode
+                                Image(systemName: vm.findLocationEnabled
                                       ? "location.viewfinder"
                                       : "viewfinder")
                                     .font(.system(size: 12, weight: .bold))
-                                Text(findLocationMode ? "Find Location · ON" : "Find Location")
+                                Text(vm.findLocationEnabled ? "Find Location · ON" : "Find Location")
                                     .font(.system(size: 12, weight: .semibold))
                             }
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
-                            .foregroundStyle(findLocationMode ? .black : .white)
+                            .foregroundStyle(vm.findLocationEnabled ? .black : .white)
                             .background(
-                                findLocationMode
+                                vm.findLocationEnabled
                                     ? AnyShapeStyle(Color.yellow)
                                     : AnyShapeStyle(Color.black.opacity(0.6)),
                                 in: Capsule()
                             )
                             .overlay(
                                 Capsule().stroke(
-                                    findLocationMode
+                                    vm.findLocationEnabled
                                         ? Color.yellow.opacity(0.6)
                                         : Color.white.opacity(0.12)
                                 )
